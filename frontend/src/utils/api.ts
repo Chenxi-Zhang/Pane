@@ -610,6 +610,28 @@ export class API {
     },
   };
 
+  static wsl = {
+    async listDistros() {
+      if (!isElectron()) throw new Error('Electron API not available');
+      return window.electronAPI.wsl.listDistros();
+    },
+
+    async listDirectory(distro: string, dirPath: string) {
+      if (!isElectron()) throw new Error('Electron API not available');
+      return window.electronAPI.wsl.listDirectory(distro, dirPath);
+    },
+
+    async validatePath(distro: string, linuxPath: string) {
+      if (!isElectron()) throw new Error('Electron API not available');
+      return window.electronAPI.wsl.validatePath(distro, linuxPath);
+    },
+
+    async getHome(distro: string) {
+      if (!isElectron()) throw new Error('Electron API not available');
+      return window.electronAPI.wsl.getHome(distro);
+    },
+  };
+
   // Permissions
   static permissions = {
     async respond(requestId: string, response: PanePermissionResponse) {

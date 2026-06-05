@@ -672,6 +672,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     openDirectory: (options?: DialogOptions): Promise<IPCResponse<string | null>> => invokeIpc('dialog:open-directory', options),
   },
 
+  // WSL directory browsing (win32 only; no-op on other platforms)
+  wsl: {
+    listDistros: (): Promise<IPCResponse<string[]>> => invokeIpc('wsl:list-distros'),
+    listDirectory: (distro: string, dirPath: string): Promise<IPCResponse<Array<{ name: string; path: string }>>> =>
+      invokeIpc('wsl:list-directory', distro, dirPath),
+    validatePath: (distro: string, linuxPath: string): Promise<IPCResponse<boolean>> =>
+      invokeIpc('wsl:validate-path', distro, linuxPath),
+    getHome: (distro: string): Promise<IPCResponse<string>> =>
+      invokeIpc('wsl:get-home', distro),
+  },
+
   // Permissions
   permissions: {
     respond: (requestId: string, response: PermissionResponse): Promise<IPCResponse> => invokeIpc('permission:respond', requestId, response),

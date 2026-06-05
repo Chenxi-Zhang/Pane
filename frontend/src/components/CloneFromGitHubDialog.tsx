@@ -5,6 +5,8 @@ import { EnhancedInput } from './ui/EnhancedInput';
 import { FieldWithTooltip } from './ui/FieldWithTooltip';
 import { API } from '../utils/api';
 import { useNavigationStore } from '../stores/navigationStore';
+import { isWindows } from '../utils/platformUtils';
+import { WSLDirectoryBrowser } from './WSLDirectoryBrowser';
 
 interface CloneFromGitHubDialogProps {
   isOpen: boolean;
@@ -24,6 +26,7 @@ export function CloneFromGitHubDialog({ isOpen, onClose }: CloneFromGitHubDialog
   const [destPath, setDestPath] = useState('');
   const [cloning, setCloning] = useState(false);
   const [error, setError] = useState('');
+  const [showWSLBrowser, setShowWSLBrowser] = useState(false);
 
   const navigateToProject = useNavigationStore(s => s.navigateToProject);
 
@@ -32,14 +35,8 @@ export function CloneFromGitHubDialog({ isOpen, onClose }: CloneFromGitHubDialog
     setDestPath('');
     setCloning(false);
     setError('');
+    setShowWSLBrowser(false);
     onClose();
-  };
-
-  const handleBrowse = async () => {
-    const result = await window.electronAPI.dialog.openDirectory();
-    if (result.success && result.data) {
-      setDestPath(result.data);
-    }
   };
 
   const handleClone = async () => {
@@ -115,11 +112,39 @@ export function CloneFromGitHubDialog({ isOpen, onClose }: CloneFromGitHubDialog
                 size="lg"
                 fullWidth
               />
-              <div className="flex justify-end">
-                <Button onClick={handleBrowse} variant="secondary" size="sm">
+              <div className="flex justify-end gap-2">
+                {isWindows() && (
+                  <Button
+                    onClick={() => setShowWSLBrowser(v => !v)}
+                    variant="ghost"
+                    size="sm"
+                  >
+                    {showWSLBrowser ? 'Hide WSL' : 'Browse WSL...'}
+                  </Button>
+                )}
+                <Button
+                  onClick={async () => {
+                    const result = await window.electronAPI.dialog.openDirectory();
+                    if (result.success && result.data) {
+                      setDestPath(result.data);
+                      setShowWSLBrowser(false);
+                    }
+                  }}
+                  variant="secondary"
+                  size="sm"
+                >
                   Browse
                 </Button>
               </div>
+              {showWSLBrowser && isWindows() && (
+                <WSLDirectoryBrowser
+                  onSelect={(uncPath) => {
+                    setDestPath(uncPath);
+                    setShowWSLBrowser(false);
+                  }}
+                  onCancel={() => setShowWSLBrowser(false)}
+                />
+              )}
             </div>
           </FieldWithTooltip>
 

@@ -11,6 +11,7 @@ import { TerminalPanelProps } from '../../types/panelComponents';
 import { useHotkeyStore } from '../../stores/hotkeyStore';
 import { renderLog, devLog } from '../../utils/console';
 import { getTerminalTheme } from '../../utils/terminalTheme';
+import { isMac } from '../../utils/platformUtils';
 import { FileEdit, FolderOpen } from 'lucide-react';
 import { useTerminalLinks } from '../terminal/hooks/useTerminalLinks';
 import { TerminalLinkTooltip } from '../terminal/TerminalLinkTooltip';
@@ -77,6 +78,12 @@ function getTerminalVisibilityViewerId(): string {
 
 function buildTerminalFontFamily(userFont: string): string {
   return `"${userFont}", "Symbols Nerd Font Mono", monospace`;
+}
+
+function normalizeTerminalBuffer(buffer: string | string[] | undefined): string {
+  if (typeof buffer === 'string') return buffer;
+  if (Array.isArray(buffer)) return buffer.join('\n');
+  return '';
 }
 
 function isClipboardImagePlaceholderText(text: string): boolean {
@@ -379,11 +386,14 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
     onStep,
   } = useTerminalSearch(xtermRef);
 
-  const resizePtyToFit = useCallback(() => {
+  const resizePtyToFit = useCallback((options?: { forceResizeSignal?: boolean }) => {
     if (!fitAddonRef.current) return;
     fitAddonRef.current.fit();
     const dimensions = fitAddonRef.current.proposeDimensions();
     if (dimensions) {
+      if (options?.forceResizeSignal && dimensions.rows > 5) {
+        window.electronAPI.invoke('terminal:resize', panel.id, dimensions.cols, dimensions.rows - 1);
+      }
       window.electronAPI.invoke('terminal:resize', panel.id, dimensions.cols, dimensions.rows);
     }
   }, [panel.id]);
@@ -395,7 +405,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
     try {
       const state = await window.electronAPI.invoke('terminal:getState', panel.id);
       if (state?.isAlternateScreen) {
-        resizePtyToFit();
+        resizePtyToFit({ forceResizeSignal: true });
         if (terminal.rows > 0) {
           terminal.refresh(0, terminal.rows - 1);
         }
@@ -404,11 +414,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
 
       terminal.reset();
       if (state?.scrollbackBuffer) {
-        const content = typeof state.scrollbackBuffer === 'string'
-          ? state.scrollbackBuffer
-          : Array.isArray(state.scrollbackBuffer)
-            ? state.scrollbackBuffer.join('\n')
-            : '';
+        const content = normalizeTerminalBuffer(state.scrollbackBuffer);
         if (content) terminal.write(content);
       }
       resizePtyToFit();
@@ -688,10 +694,10 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
           try {
             const { WebLinksAddon: WebLinksAddonImpl } = await import('@xterm/addon-web-links');
             if (!disposed) {
-              const isMac = navigator.platform.toUpperCase().includes('MAC');
+              const useMetaKey = isMac();
               const webLinksAddon = new WebLinksAddonImpl((event, uri) => {
                 // Only open link if Ctrl (Windows/Linux) or Cmd (Mac) is held
-                if (isMac ? event.metaKey : event.ctrlKey) {
+                if (useMetaKey ? event.metaKey : event.ctrlKey) {
                   window.electronAPI.openExternal(uri);
                 }
               });
@@ -804,38 +810,44 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
           // 30 s interval was removed to stop hidden panels from doing a full
           // buffer walk + IPC payload once per half-minute for no visible gain.
 
-          // Restore scrollback if we have saved state FOR THIS PANEL
-          // When the PTY is alive (initialized === true), always prefer raw scrollback
-          // because it accumulates all PTY output in real-time — the serialized snapshot
-          // is frozen at the moment the component last unmounted and misses any output
-          // that arrived while the panel wasn't displayed.
-          // The serialized snapshot is only more valuable for app restart scenarios
-          // (PTY gone, raw buffer lost) where it preserves formatting.
+          // Restore visual content if we have saved state FOR THIS PANEL.
+          // If the live PTY is in alternate-screen/TUI mode, do not replay normal
+          // shell scrollback into the new xterm instance — that paints the old bash
+          // prompt over apps like opencode until a manual resize makes the app redraw.
+          // Instead, restore the latest alternate-screen frame and send the same PTY
+          // resize signal that already fixes TUI redraws from the toolbar/manual resize.
           if (terminalStateForThisPanel) {
-            // Raw scrollback: always current when PTY is alive, contains full ANSI codes
-            if (terminalStateForThisPanel.scrollbackBuffer) {
-              let restoredContent: string;
-              if (typeof terminalStateForThisPanel.scrollbackBuffer === 'string') {
-                restoredContent = terminalStateForThisPanel.scrollbackBuffer;
-                console.log('[TerminalPanel] Restoring', restoredContent.length, 'chars of scrollback (raw, live PTY)');
-              } else if (Array.isArray(terminalStateForThisPanel.scrollbackBuffer)) {
-                restoredContent = terminalStateForThisPanel.scrollbackBuffer.join('\n');
-                console.log('[TerminalPanel] Restoring', terminalStateForThisPanel.scrollbackBuffer.length, 'lines of scrollback (raw, live PTY)');
-              } else {
-                restoredContent = '';
+            if (terminalStateForThisPanel.isAlternateScreen) {
+              const alternateContent = normalizeTerminalBuffer(terminalStateForThisPanel.alternateScreenBuffer);
+              if (alternateContent) {
+                console.log('[TerminalPanel] Restoring', alternateContent.length, 'chars of alternate-screen buffer');
+                terminal.write(alternateContent);
               }
+
+              fitAddon.fit();
+              const dimensions = fitAddon.proposeDimensions();
+              if (dimensions) {
+                if (dimensions.rows > 5) {
+                  window.electronAPI.invoke('terminal:resize', panel.id, dimensions.cols, dimensions.rows - 1);
+                }
+                window.electronAPI.invoke('terminal:resize', panel.id, dimensions.cols, dimensions.rows);
+              }
+              if (terminal.rows > 0) {
+                terminal.refresh(0, terminal.rows - 1);
+              }
+            } else if (terminalStateForThisPanel.scrollbackBuffer) {
+              const restoredContent = normalizeTerminalBuffer(terminalStateForThisPanel.scrollbackBuffer);
               if (restoredContent) {
+                console.log('[TerminalPanel] Restoring', restoredContent.length, 'chars of scrollback (raw, live PTY)');
                 terminal.write(restoredContent);
               }
+              fitAddon.fit();
             } else if (terminalStateForThisPanel.serializedBuffer) {
               // Fallback: serialized snapshot (for when raw scrollback is empty/unavailable)
               console.log('[TerminalPanel] Restoring serialized snapshot for panel', panel.id);
               terminal.write(terminalStateForThisPanel.serializedBuffer);
+              fitAddon.fit();
             }
-            // Force WebGL renderer to redraw after buffer content changes.
-            // Without this, macOS WebGL canvas shows stale/stuttered content until
-            // a resize event (minimize/fullscreen) forces invalidation.
-            fitAddon.fit();
           }
 
           // Handle paste events (Ctrl+V, voice transcription, external text injection)

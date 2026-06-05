@@ -7,6 +7,8 @@ import { FieldWithTooltip } from './ui/FieldWithTooltip';
 import { Card } from './ui/Card';
 import { API } from '../utils/api';
 import { useNavigationStore } from '../stores/navigationStore';
+import { isWindows } from '../utils/platformUtils';
+import { WSLDirectoryBrowser } from './WSLDirectoryBrowser';
 import type { CreateProjectRequest } from '../types/project';
 
 interface AddProjectDialogProps {
@@ -18,6 +20,7 @@ export function AddProjectDialog({ isOpen, onClose }: AddProjectDialogProps) {
   const [newProject, setNewProject] = useState<CreateProjectRequest>({ name: '', path: '', buildScript: '', runScript: '' });
   const [detectedBranch, setDetectedBranch] = useState<string | null>(null);
   const [showValidationErrors, setShowValidationErrors] = useState(false);
+  const [showWSLBrowser, setShowWSLBrowser] = useState(false);
 
   const navigateToProject = useNavigationStore(s => s.navigateToProject);
 
@@ -119,13 +122,23 @@ export function AddProjectDialog({ isOpen, onClose }: AddProjectDialogProps) {
                 required
                 showRequiredIndicator={showValidationErrors}
               />
-              <div className="flex justify-end">
+              <div className="flex justify-end gap-2">
+                {isWindows() && (
+                  <Button
+                    onClick={() => setShowWSLBrowser(v => !v)}
+                    variant="ghost"
+                    size="sm"
+                  >
+                    {showWSLBrowser ? 'Hide WSL' : 'Browse WSL...'}
+                  </Button>
+                )}
                 <Button
                   onClick={async () => {
                     const result = await window.electron?.invoke('dialog:open-directory') as { success: boolean; data?: string } | undefined;
                     if (result?.success && result.data) {
                       setNewProject({ ...newProject, path: result.data });
                       detectCurrentBranch(result.data);
+                      setShowWSLBrowser(false);
                     }
                   }}
                   variant="secondary"
@@ -134,6 +147,16 @@ export function AddProjectDialog({ isOpen, onClose }: AddProjectDialogProps) {
                   Browse
                 </Button>
               </div>
+              {showWSLBrowser && isWindows() && (
+                <WSLDirectoryBrowser
+                  onSelect={(uncPath) => {
+                    setNewProject({ ...newProject, path: uncPath });
+                    detectCurrentBranch(uncPath);
+                    setShowWSLBrowser(false);
+                  }}
+                  onCancel={() => setShowWSLBrowser(false)}
+                />
+              )}
             </div>
           </FieldWithTooltip>
 

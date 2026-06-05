@@ -10,6 +10,8 @@ import { EnhancedInput } from './ui/EnhancedInput';
 import { FieldWithTooltip } from './ui/FieldWithTooltip';
 import { Card } from './ui/Card';
 import { Folder, GitBranch, Hammer, Play } from 'lucide-react';
+import { isWindows } from '../utils/platformUtils';
+import { WSLDirectoryBrowser } from './WSLDirectoryBrowser';
 
 interface ProjectSelectorProps {
   onProjectChange?: (project: Project) => void;
@@ -25,6 +27,7 @@ export default function ProjectSelector({ onProjectChange }: ProjectSelectorProp
   const [detectedBranch, setDetectedBranch] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [settingsProject, setSettingsProject] = useState<Project | null>(null);
+  const [showWSLBrowser, setShowWSLBrowser] = useState(false);
   const { showError } = useErrorStore();
 
   useEffect(() => {
@@ -296,7 +299,17 @@ export default function ProjectSelector({ onProjectChange }: ProjectSelectorProp
                       required
                       showRequiredIndicator={showValidationErrors}
                     />
-                    <div className="flex justify-end">
+                    <div className="flex justify-end gap-2">
+                      {isWindows() && (
+                        <Button
+                          type="button"
+                          onClick={() => setShowWSLBrowser(v => !v)}
+                          variant="ghost"
+                          size="sm"
+                        >
+                          {showWSLBrowser ? 'Hide WSL' : 'Browse WSL...'}
+                        </Button>
+                      )}
                       <Button
                         type="button"
                         onClick={async () => {
@@ -307,6 +320,7 @@ export default function ProjectSelector({ onProjectChange }: ProjectSelectorProp
                           if (result.success && result.data) {
                             setNewProject({ ...newProject, path: result.data });
                             detectCurrentBranch(result.data);
+                            setShowWSLBrowser(false);
                           }
                         }}
                         variant="secondary"
@@ -315,6 +329,16 @@ export default function ProjectSelector({ onProjectChange }: ProjectSelectorProp
                         Browse
                       </Button>
                     </div>
+                    {showWSLBrowser && isWindows() && (
+                      <WSLDirectoryBrowser
+                        onSelect={(uncPath) => {
+                          setNewProject({ ...newProject, path: uncPath });
+                          detectCurrentBranch(uncPath);
+                          setShowWSLBrowser(false);
+                        }}
+                        onCancel={() => setShowWSLBrowser(false)}
+                      />
+                    )}
                   </div>
                 </FieldWithTooltip>
               </div>

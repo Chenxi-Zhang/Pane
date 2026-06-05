@@ -276,6 +276,14 @@ interface ElectronAPI {
     openDirectory: (options?: Electron.OpenDialogOptions) => Promise<IPCResponse<string | null>>;
   };
 
+  // WSL directory browsing
+  wsl: {
+    listDistros: () => Promise<IPCResponse<string[]>>;
+    listDirectory: (distro: string, dirPath: string) => Promise<IPCResponse<Array<{ name: string; path: string }>>>;
+    validatePath: (distro: string, linuxPath: string) => Promise<IPCResponse<boolean>>;
+    getHome: (distro: string) => Promise<IPCResponse<string>>;
+  };
+
   // Permissions
   permissions: {
     respond: (requestId: string, response: PanePermissionResponse) => Promise<IPCResponse>;
