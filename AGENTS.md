@@ -1,42 +1,52 @@
-# Repository Guidelines
+# Pane
 
-## Project Structure & Module Organization
-- Root `pnpm` workspace with packages: `main/` (Electron main process, TypeScript), `frontend/` (React + Vite), `shared/` (shared types), and `tests/` (Playwright E2E).
-- Key paths: `main/src/{services,ipc,utils}/`, `frontend/src/{components,hooks,stores,utils}/`, `main/assets/`, `scripts/`.
-- Build artifacts: `frontend/dist/`, `main/dist/`, packaged output `dist-electron/`.
+Electron desktop app for managing multiple AI coding agent instances (Claude Code, Codex, Aider, Goose) against git worktrees. Pnpm monorepo: `main/` (Electron main process), `frontend/` (React + Vite), `shared/` (types), `tests/` (Playwright E2E). Read `CLAUDE.md` before starting work — it contains architecture details, implementation status, and critical constraints not repeated here.
 
-## Build, Test, and Development Commands
-- Dev app: `pnpm dev` (spawns frontend + Electron).
-- Build all: `pnpm build` (frontend, main, then electron package).
-- Package (examples): `pnpm build:mac`, `pnpm build:linux`.
-- Lint: `pnpm lint`; Type-check: `pnpm typecheck` (runs per package).
-- Tests (E2E): `pnpm test`, `pnpm test:ui`, CI configs in `playwright.ci*.config.ts`.
-- Main unit tests (if added): `pnpm --filter main test`, coverage: `pnpm --filter main run test:coverage`.
+## Toolchain
 
-## Coding Style & Naming Conventions
-- Use TypeScript throughout; follow ESLint configs in `frontend/eslint.config.js` and `main/eslint.config.js`.
-- Indentation 2 spaces; prefer explicit types at module boundaries.
-- Naming: `camelCase` for variables/functions, `PascalCase` for React components/types, `kebab-case` for filenames (React files may match component name).
-- Run `pnpm lint && pnpm typecheck` before sending PRs.
+| Action | Command | Authority |
+|--------|---------|-----------|
+| Dev | `pnpm dev` | package.json (`electron-dev`) |
+| Build all | `pnpm build` | package.json |
+| Build frontend | `pnpm build:frontend` | frontend/vite.config.ts |
+| Build main | `pnpm build:main` | main/tsconfig.json |
+| Lint | `pnpm lint` | main/eslint.config.js, frontend/eslint.config.js |
+| Type-check | `pnpm typecheck` | tsconfig.json per package |
+| Test (E2E) | `pnpm test` | playwright.config.ts |
+| Test (CI) | `pnpm test:ci` | playwright.ci.config.ts |
+| Test (unit, main) | `pnpm --filter main test` | main/vitest.config.* |
+| Setup (fresh clone) | `pnpm run setup` | package.json |
+| Generate notices | `pnpm run generate-notices` | scripts/generate-notices.js |
 
-## Testing Guidelines
-- E2E tests live in `tests/*.spec.ts` (Playwright). Example: `pnpm test -- tests/smoke.spec.ts`.
-- Add Playwright tests for user-visible flows; mock external services where possible.
-- For backend logic in `main/`, use Vitest colocated under `main/src/**/__tests__` or `*.spec.ts`.
+## Boundaries
 
-## Commit & Pull Request Guidelines
-- Commits: present tense, focused, reference issues (e.g., "Fix session diff flicker, closes #123").
-- PRs must include: clear description, linked issues, testing notes; screenshots/GIFs for UI changes.
-- If dependencies change, run `pnpm run generate-notices` and commit updated `NOTICES`.
+### NEVER
+- NEVER use TypeScript `any` — use `unknown` with type guards instead; `@typescript-eslint/no-explicit-any` is `'error'` in both ESLint configs
+- NEVER modify files in `main/dist/` or `frontend/dist/` — they are build artifacts
+- NEVER add dependencies without running `pnpm run generate-notices` afterward — the `NOTICES` file must stay in sync
 
-## Security & Configuration Tips
-- Node >= `22.14`; `pnpm` >= `8`. Use `pnpm` only.
-- Secrets via `.env` (dotenv) for local dev; never commit secrets.
-- To avoid clobbering local data when hacking on Pane with Pane: `PANE_DIR=~/.pane_test pnpm dev`.
+### ASK
+- Changing build targets or electron-builder configuration — impacts all platform packaging
+- Adding new native dependencies (`.node` binaries) — requires `electron:rebuild` and potentially `asarUnpack` config changes
+- Modifying database schema in `main/src/database/migrations/` — dual migration system (TypeScript + SQL)
 
-## Agent Notes (for automation)
-- Keep changes minimal and scoped; prefer small patches.
-- Update docs alongside code; do not alter build targets without discussion.
-- Use repository scripts (pnpm) and keep formatting consistent with existing files.
-- Always review the root `CLAUDE.md` before beginning any work. 
-- Scan the repository for every `CLAUDE.md`, and when working in a folder or any of its subfolders that has one, read and follow that file too.
+### ALWAYS
+- When changing dependencies, ALWAYS run `pnpm run generate-notices` and commit the updated `NOTICES` file
+- When working on frontend UI, ALWAYS consult `guidelines/PROGRESSIVE_DISCLOSURE_AND_UX.md` for design patterns
+- When developing on Pane itself using Pane, ALWAYS use `PANE_DIR=~/.pane_test pnpm dev` to avoid clobbering your real data
+
+## Architecture Notes
+
+- IPC is the only communication channel between renderer and main process — no remote modules, no node integration in renderer
+- Each AI agent runs in its own `node-pty` process inside a git worktree; sessions are isolated at the filesystem level
+- Panel system is extensible: `main/src/services/panels/` has abstract base classes (`AbstractCliManager`, `AbstractAIPanelManager`) for adding new agent types; see `docs/ADDING_NEW_CLI_TOOLS.md`
+- Database is SQLite via `better-sqlite3-multiple-ciphers` — synchronous API, no ORM; schema in `main/src/database/migrations/`
+- Release script (`scripts/release.js`) bumps version, commits, tags, and pushes; CI builds all platforms from the tag
+
+## Done Means
+
+- `pnpm lint` passes with zero errors
+- `pnpm typecheck` passes across all workspaces
+- `pnpm build` succeeds (frontend + main + electron package)
+- E2E tests pass: `pnpm test`
+- If dependencies changed: `NOTICES` file is updated and committed
