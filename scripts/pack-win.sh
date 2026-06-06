@@ -147,20 +147,20 @@ fi
 # ─── Step 2: Prepare Windows temp directory ─────────────────────────────────
 step "2" "Preparing Windows temp directory"
 
-# Clean existing directory but preserve node_modules for reuse
 if [ -d "$WSL_TEMP_DIR" ]; then
   if [ -d "$WSL_TEMP_DIR/node_modules" ]; then
     info "Reusing existing $WIN_TEMP_DIR (preserving node_modules)..."
-    rm -rf "$WSL_TEMP_DIR/main" "$WSL_TEMP_DIR/frontend" "$WSL_TEMP_DIR/dist-electron"
-    rm -f "$WSL_TEMP_DIR/package.json" "$WSL_TEMP_DIR/pnpm-lock.yaml"
-    rm -f "$WSL_TEMP_DIR/NOTICES" "$WSL_TEMP_DIR/LICENSE"
-    rm -rf "$WSL_TEMP_DIR/build"
     HAS_NODE_MODULES=true
   else
-    info "Cleaning existing $WIN_TEMP_DIR (no node_modules)..."
-    rm -rf "$WSL_TEMP_DIR"
+    info "Preparing existing $WIN_TEMP_DIR (no node_modules cache)..."
     HAS_NODE_MODULES=false
   fi
+
+  if ! rm -rf "$WSL_TEMP_DIR/main" "$WSL_TEMP_DIR/frontend" "$WSL_TEMP_DIR/main-dist" "$WSL_TEMP_DIR/frontend-dist" "$WSL_TEMP_DIR/build" "$WSL_TEMP_DIR/dist-electron/win-unpacked" 2>/dev/null; then
+    warn "Targeted cleanup failed (NTFS lock), falling back to PowerShell..."
+    powershell.exe -NoProfile -Command "Remove-Item -Recurse -Force 'C:\temp\pane-build\main','C:\temp\pane-build\frontend','C:\temp\pane-build\main-dist','C:\temp\pane-build\frontend-dist','C:\temp\pane-build\build','C:\temp\pane-build\dist-electron\win-unpacked' -ErrorAction SilentlyContinue"
+  fi
+  rm -f "$WSL_TEMP_DIR/package.json" "$WSL_TEMP_DIR/pnpm-lock.yaml" "$WSL_TEMP_DIR/NOTICES" "$WSL_TEMP_DIR/LICENSE" "$WSL_TEMP_DIR/.build-cache.json" "$WSL_TEMP_DIR/dist-electron/builder-debug.yml"
 else
   HAS_NODE_MODULES=false
 fi
@@ -178,10 +178,10 @@ cp -r "$ROOT_DIR/frontend/dist" "$WSL_TEMP_DIR/frontend-dist"
 # Package config (has electron-builder "build" field)
 cp "$ROOT_DIR/package.json" "$WSL_TEMP_DIR/package.json"
 
-# Lockfile for reproducible installs
-if [ -f "$ROOT_DIR/pnpm-lock.yaml" ]; then
-  cp "$ROOT_DIR/pnpm-lock.yaml" "$WSL_TEMP_DIR/pnpm-lock.yaml"
-fi
+# Lockfile: intentionally NOT copied. pnpm-lock.yaml causes electron-builder
+# to detect pnpm mode even though node_modules was installed by npm, resulting
+# in "No JSON content found in output". npm install uses package-lock.json
+# which it generates on first install.
 
 # Windows icon
 mkdir -p "$WSL_TEMP_DIR/main/assets"
@@ -243,30 +243,29 @@ ls -la "$WSL_TEMP_DIR/main/dist/" 2>/dev/null | head -5
 
 # ─── Step 3: npm install on Windows side ────────────────────────────────────
 if [ "$HAS_NODE_MODULES" = true ]; then
-  step "3" "npm install skipped (reusing existing node_modules)"
-  ok "node_modules already installed"
+  step "3" "Refreshing dependencies on Windows (reusing existing node_modules)"
 else
   step "3" "Installing dependencies on Windows (npm install --ignore-scripts)"
-
-  info "This may take a few minutes..."
-  powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "
-    Set-Location '${WIN_TEMP_DIR}'
-    Write-Host 'Running: npm install --ignore-scripts'
-    npm install --ignore-scripts 2>&1
-    if (\$LASTEXITCODE -ne 0) {
-      Write-Host 'npm install FAILED' -ForegroundColor Red
-      exit \$LASTEXITCODE
-    }
-    Write-Host 'npm install succeeded' -ForegroundColor Green
-  "
-
-  if [ $? -ne 0 ]; then
-    err "npm install failed on Windows side."
-    err "Check the output above for errors."
-    exit 1
-  fi
-  ok "npm install completed"
 fi
+
+info "npm will reuse node_modules and the Windows npm cache when possible."
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "
+  Set-Location '${WIN_TEMP_DIR}'
+  Write-Host 'Running: npm install --ignore-scripts'
+  npm install --ignore-scripts 2>&1
+  if (\$LASTEXITCODE -ne 0) {
+    Write-Host 'npm install FAILED' -ForegroundColor Red
+    exit \$LASTEXITCODE
+  }
+  Write-Host 'npm install succeeded' -ForegroundColor Green
+"
+
+if [ $? -ne 0 ]; then
+  err "npm install failed on Windows side."
+  err "Check the output above for errors."
+  exit 1
+fi
+ok "npm install completed"
 
 # ─── Step 4: electron-rebuild for native modules ────────────────────────────
 step "4" "Rebuilding native modules for Windows Electron"
@@ -303,9 +302,23 @@ fs.writeFileSync('${WSL_TEMP_DIR}/package.json', JSON.stringify(pj, null, 2) + '
 "
 ok "Signing disabled in config"
 
+# Set Electron download mirror if the env var is provided (avoids GitHub timeouts in China/behind firewalls).
+# Export these in your shell to use:
+#   export ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/"
+#   export ELECTRON_BUILDER_BINARIES_MIRROR="https://npmmirror.com/mirrors/electron-builder-binaries/"
+MIRROR_ENV=""
+if [ -n "${ELECTRON_MIRROR:-}" ]; then
+  MIRROR_ENV="\$env:ELECTRON_MIRROR = '${ELECTRON_MIRROR}'; "
+  info "Using ELECTRON_MIRROR: ${ELECTRON_MIRROR}"
+fi
+if [ -n "${ELECTRON_BUILDER_BINARIES_MIRROR:-}" ]; then
+  MIRROR_ENV="${MIRROR_ENV}\$env:ELECTRON_BUILDER_BINARIES_MIRROR = '${ELECTRON_BUILDER_BINARIES_MIRROR}'; "
+  info "Using ELECTRON_BUILDER_BINARIES_MIRROR: ${ELECTRON_BUILDER_BINARIES_MIRROR}"
+fi
+
 info "Running electron-builder --win portable --${ARCH}..."
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "
-  \$env:ELECTRON_BUILDER_ALLOW_UNRESOLVED_DEPENDENCIES = 'true'
+  ${MIRROR_ENV}\$env:ELECTRON_BUILDER_ALLOW_UNRESOLVED_DEPENDENCIES = 'true'
   Set-Location '${WIN_TEMP_DIR}'
   Write-Host 'Running: npx electron-builder --win portable --${ARCH} --publish never --config.npmRebuild=false'
   npx electron-builder --win portable --${ARCH} --publish never --config.npmRebuild=false 2>&1
