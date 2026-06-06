@@ -21,6 +21,7 @@ import { TaskQueue } from '../services/taskQueue';
 import { registerIpcHandlers } from '../ipc';
 import { PaneDaemonServer } from './server';
 import { PaneRemoteHttpApiServer } from './httpApiServer';
+import { PaneLocalApiServer } from './localApiServer';
 import { PaneRemoteTransportController } from './remoteTransportController';
 import { createFanoutEventSink, noopPaneEventSink, type PaneEventSink } from '../core/eventSink';
 import {
@@ -51,6 +52,7 @@ export interface PaneDaemonHost {
   commandRegistry: PaneCommandRegistry;
   paneDaemonServer: PaneDaemonServer | null;
   remoteHttpApiServer: PaneRemoteHttpApiServer | null;
+  localApiServer: PaneLocalApiServer | null;
   permissionIpcServer: PermissionIpcServer | null;
   shutdown(): Promise<void>;
 }
@@ -217,6 +219,15 @@ export async function createPaneDaemonHost(options: PaneDaemonHostOptions): Prom
     console.error('[Pane daemon] Failed to start local daemon server; continuing with renderer-only runtime events', error);
   }
 
+  let localApiServer: PaneLocalApiServer | null = null;
+  try {
+    localApiServer = new PaneLocalApiServer();
+    await localApiServer.start();
+  } catch (error) {
+    console.error('[Pane local API] Failed to start local API server; continuing without external tool integration', error);
+    localApiServer = null;
+  }
+
   if (startRemoteTransport) {
     remoteTransportController.startWatchingConfig();
     try {
@@ -269,6 +280,7 @@ export async function createPaneDaemonHost(options: PaneDaemonHostOptions): Prom
     daemonServices,
     commandRegistry,
     paneDaemonServer,
+    localApiServer,
     get remoteHttpApiServer() {
       return remoteTransportController.getServer();
     },
@@ -286,6 +298,9 @@ export async function createPaneDaemonHost(options: PaneDaemonHostOptions): Prom
       await remoteTransportController.stopWatchingAndShutdown();
       if (paneDaemonServer) {
         await paneDaemonServer.stop();
+      }
+      if (localApiServer) {
+        await localApiServer.stop();
       }
       versionChecker.stopPeriodicCheck();
       logger.close();

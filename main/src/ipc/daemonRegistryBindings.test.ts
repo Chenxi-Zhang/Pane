@@ -127,6 +127,7 @@ const PANEL_CHANNELS = [
   'terminal:paste-image',
   'terminal:save-scrollback',
   'terminal:paste-file',
+  'terminal:set-external-activity',
 ] as const;
 
 const SCRIPT_CHANNELS = [

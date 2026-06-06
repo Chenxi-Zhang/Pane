@@ -148,6 +148,9 @@ interface TerminalProcess {
   isAlternateScreen: boolean;
   activityStatus: 'active' | 'idle';
   idleTimer: ReturnType<typeof setTimeout> | null;
+  // Once an external tool signals activity status, PTY output no longer
+  // controls the status dot — the external source owns it permanently.
+  externalActivityControlled: boolean;
   // DEC Mode 2026 synchronized-output block tracking — persists across chunks
   inSyncBlock: boolean;
   codexAgentSessionId?: string;
@@ -774,6 +777,7 @@ export class TerminalPanelManager {
       isAlternateScreen: false,
       activityStatus: 'idle',
       idleTimer: null,
+      externalActivityControlled: false,
       inSyncBlock: false,
       codexResumeOutputBuffer: ''
     };
@@ -954,17 +958,19 @@ export class TerminalPanelManager {
       // Update last activity
       terminal.lastActivity = new Date();
 
-      // Activity status transition: mark active on first byte after idle
-      if (terminal.activityStatus !== 'active') {
-        terminal.activityStatus = 'active';
-        this.emitActivityStatus(terminal);
+      if (!terminal.externalActivityControlled) {
+        // Activity status transition: mark active on first byte after idle
+        if (terminal.activityStatus !== 'active') {
+          terminal.activityStatus = 'active';
+          this.emitActivityStatus(terminal);
+        }
+        if (terminal.idleTimer) clearTimeout(terminal.idleTimer);
+        terminal.idleTimer = setTimeout(() => {
+          terminal.activityStatus = 'idle';
+          terminal.idleTimer = null;
+          this.emitActivityStatus(terminal);
+        }, IDLE_THRESHOLD_MS);
       }
-      if (terminal.idleTimer) clearTimeout(terminal.idleTimer);
-      terminal.idleTimer = setTimeout(() => {
-        terminal.activityStatus = 'idle';
-        terminal.idleTimer = null;
-        this.emitActivityStatus(terminal);
-      }, IDLE_THRESHOLD_MS);
 
       // Detect alternate screen buffer enter/exit for universal TUI detection
       // (works on WSL where pty.process reports wsl.exe instead of the Linux foreground app)
@@ -1323,6 +1329,71 @@ export class TerminalPanelManager {
       status: terminal.activityStatus,
       lastActivityAt: terminal.lastActivity.toISOString()
     });
+  }
+
+  /**
+   * Set the activity status of a terminal panel from an external source.
+   *
+   * External tools call this through the daemon command
+   * `terminal:set-external-activity` to signal that a terminal has transitioned
+   * between working and idle states.  This bypasses the normal PTY-output-based
+   * idle timer so the UI reacts immediately.
+   *
+   * @param identifier  One of:
+   *                    - panelId (exact match)
+   *                    - sessionId (matches any terminal in that session)
+   *                    - worktree / cwd path (matches terminal whose session
+   *                      has that worktree_path, or whose cwd matches)
+   * @param status      `'active'` to mark as working, `'idle'` to mark as done.
+   * @returns `true` if a matching terminal was found and updated.
+   */
+  setExternalActivityStatus(identifier: string, status: 'active' | 'idle'): boolean {
+     let terminal = this.findTerminalByIdentifier(identifier);
+
+    if (!terminal) {
+      return false;
+    }
+
+    if (terminal.activityStatus === status) {
+      return true;
+    }
+
+    terminal.externalActivityControlled = true;
+    terminal.activityStatus = status;
+    terminal.lastActivity = new Date();
+
+    // Clear the PTY-based idle timer so it doesn't override this external signal.
+    if (terminal.idleTimer) {
+      clearTimeout(terminal.idleTimer);
+      terminal.idleTimer = null;
+    }
+
+    this.emitActivityStatus(terminal);
+    return true;
+  }
+
+  private findTerminalByIdentifier(identifier: string): TerminalProcess | undefined {
+    // 1. Exact panelId match
+    const byPanelId = this.terminals.get(identifier);
+    if (byPanelId) return byPanelId;
+
+    // 2. sessionId match — return the first terminal in that session
+    for (const [, t] of this.terminals) {
+      if (t.sessionId === identifier) return t;
+    }
+
+    // 3. Path match — worktree path (via session DB) or cwd (via panel state)
+    const normalizedId = identifier.replace(/\/+$/, '');
+    for (const [, t] of this.terminals) {
+      const panel = panelManager.getPanel(t.panelId);
+      if (!panel?.state?.customState || typeof panel.state.customState !== 'object') continue;
+
+      const cs = panel.state.customState as Record<string, unknown>;
+      const cwd = typeof cs.cwd === 'string' ? cs.cwd.replace(/\/+$/, '') : '';
+      if (cwd === normalizedId) return t;
+    }
+
+    return undefined;
   }
 
   destroyTerminal(panelId: string): void {

@@ -372,6 +372,7 @@ const DAEMON_PANEL_CHANNELS = [
   'terminal:paste-image',
   'terminal:save-scrollback',
   'terminal:paste-file',
+  'terminal:set-external-activity',
 ] as const;
 
 export function registerPanelHandlers(
@@ -794,6 +795,10 @@ export function registerPanelHandlers(
   ipcMain.handle('browser-panel:register-webview', async (_, wcId: number, panelId: string, sessionId: string) => {
     getPaneWebviewContextMap().set(wcId, { panelId, sessionId });
     return { success: true };
+  });
+
+  commandRegistry.register('terminal:set-external-activity', async (identifier: string, status: 'active' | 'idle') => {
+    return terminalPanelManager.setExternalActivityStatus(identifier, status);
   });
 
   commandRegistry.bindChannels(ipcMain, DAEMON_PANEL_CHANNELS);

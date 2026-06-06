@@ -108,6 +108,7 @@ export const DAEMON_OWNED_EXACT_CHANNELS = [
   'file:write',
   'file:write-binary',
   'file:write-project',
+  'terminal:set-external-activity',
 ] as const;
 
 export const ELECTRON_ADAPTER_ONLY_CHANNELS = [
