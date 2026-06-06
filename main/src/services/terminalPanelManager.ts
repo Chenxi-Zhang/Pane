@@ -2,6 +2,7 @@ import * as pty from '@lydell/node-pty';
 import { ToolPanel, TerminalPanelState, PanelEventType } from '../../../shared/types/panels';
 import { getPaneDaemonEventSink, getPaneEventSink, getPtyHostRuntime, getRuntimeConfigManager, type PtyHandleLike, type PtyHostRuntime } from '../core/runtime';
 import { panelManager } from './panelManager';
+import { databaseService } from './database';
 import * as os from 'os';
 import * as path from 'path';
 import { getShellPath } from '../utils/shellPath';
@@ -146,7 +147,7 @@ interface TerminalProcess {
   isVisible: boolean;
   // Alternate screen buffer tracking — universal TUI detection signal
   isAlternateScreen: boolean;
-  activityStatus: 'active' | 'idle';
+  activityStatus: 'active' | 'idle' | 'unviewed';
   idleTimer: ReturnType<typeof setTimeout> | null;
   // Once an external tool signals activity status, PTY output no longer
   // controls the status dot — the external source owns it permanently.
@@ -1359,8 +1360,14 @@ export class TerminalPanelManager {
     }
 
     terminal.externalActivityControlled = true;
-    terminal.activityStatus = status;
     terminal.lastActivity = new Date();
+
+    if (status === 'idle') {
+      const activePanel = databaseService.getActivePanel(terminal.sessionId);
+      terminal.activityStatus = activePanel?.id === terminal.panelId ? 'idle' : 'unviewed';
+    } else {
+      terminal.activityStatus = status;
+    }
 
     // Clear the PTY-based idle timer so it doesn't override this external signal.
     if (terminal.idleTimer) {
@@ -1368,6 +1375,17 @@ export class TerminalPanelManager {
       terminal.idleTimer = null;
     }
 
+    this.emitActivityStatus(terminal);
+    return true;
+  }
+
+  markPanelViewed(panelId: string): boolean {
+    const terminal = this.terminals.get(panelId);
+    if (!terminal || terminal.activityStatus !== 'unviewed') {
+      return false;
+    }
+
+    terminal.activityStatus = 'idle';
     this.emitActivityStatus(terminal);
     return true;
   }

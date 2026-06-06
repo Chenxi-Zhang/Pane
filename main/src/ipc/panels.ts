@@ -373,6 +373,7 @@ const DAEMON_PANEL_CHANNELS = [
   'terminal:save-scrollback',
   'terminal:paste-file',
   'terminal:set-external-activity',
+  'terminal:mark-viewed',
 ] as const;
 
 export function registerPanelHandlers(
@@ -799,6 +800,10 @@ export function registerPanelHandlers(
 
   commandRegistry.register('terminal:set-external-activity', async (identifier: string, status: 'active' | 'idle') => {
     return terminalPanelManager.setExternalActivityStatus(identifier, status);
+  });
+
+  commandRegistry.register('terminal:mark-viewed', async (panelId: string) => {
+    return terminalPanelManager.markPanelViewed(panelId);
   });
 
   commandRegistry.bindChannels(ipcMain, DAEMON_PANEL_CHANNELS);

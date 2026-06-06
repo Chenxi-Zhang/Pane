@@ -91,7 +91,9 @@ export const usePanelStore = create<PanelStore>()(
     getSessionActivityStatus: (sessionId) => {
       const sessionPanels = get().panels[sessionId] || [];
       const actStatus = get().activityStatus;
-      return sessionPanels.some((p) => actStatus[p.id] === 'active') ? 'active' : 'idle';
+      if (sessionPanels.some((p) => actStatus[p.id] === 'active')) return 'active';
+      if (sessionPanels.some((p) => actStatus[p.id] === 'unviewed')) return 'unviewed';
+      return 'idle';
     },
   }))
 );

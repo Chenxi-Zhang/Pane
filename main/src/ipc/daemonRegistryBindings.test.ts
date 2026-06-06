@@ -128,6 +128,7 @@ const PANEL_CHANNELS = [
   'terminal:save-scrollback',
   'terminal:paste-file',
   'terminal:set-external-activity',
+  'terminal:mark-viewed',
 ] as const;
 
 const SCRIPT_CHANNELS = [

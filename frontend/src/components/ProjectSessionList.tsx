@@ -589,7 +589,10 @@ function SessionRow({
 
   const sessionActivity = usePanelStore(s => {
     const sessionPanels = s.panels[session.id] || [];
-    return sessionPanels.some(p => s.activityStatus[p.id] === 'active') ? 'active' : 'idle';
+    const statuses = sessionPanels.map(p => s.activityStatus[p.id]).filter(Boolean);
+    if (statuses.includes('active')) return 'active';
+    if (statuses.includes('unviewed')) return 'unviewed';
+    return 'idle';
   });
 
   // Fetch git status if not available
@@ -646,7 +649,8 @@ function SessionRow({
   const adds = (gs?.commitAdditions ?? 0) + (gs?.additions ?? 0);
   const dels = (gs?.commitDeletions ?? 0) + (gs?.deletions ?? 0);
   const hasDiff = adds > 0 || dels > 0;
-  const showActivityRail = sessionActivity === 'active';
+  const showActivityRail = sessionActivity === 'active' || sessionActivity === 'unviewed';
+  const activityRailColor = sessionActivity === 'active' ? 'bg-status-info' : 'bg-status-warning';
 
   return (
     <Tooltip
@@ -658,8 +662,8 @@ function SessionRow({
       <div
         className={`group/session relative w-full text-left pl-3 pr-3 py-1.5 transition-colors flex items-center gap-1 cursor-pointer ${
           isActive
-            ? 'bg-interactive/30 border-l-4 border-interactive'
-            : 'hover:bg-surface-hover border-l-4 border-transparent'
+            ? 'bg-[color:var(--color-surface-navigation-selected)] hover:bg-[color:var(--color-surface-navigation-selected-hover)]'
+            : 'hover:bg-surface-hover'
         }`}
         onClick={onClick}
         role="button"
@@ -672,7 +676,7 @@ function SessionRow({
         }}
       >
         {showActivityRail && (
-          <span className="pointer-events-none absolute left-0 top-0 h-full w-1 bg-status-info animate-pulse" />
+          <span className={`pointer-events-none absolute left-0 top-0 h-full w-1 ${activityRailColor} ${sessionActivity === 'active' ? 'animate-pulse' : ''}`} />
         )}
 
         <SessionRowContent

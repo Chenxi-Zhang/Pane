@@ -55,6 +55,7 @@ export const panelApi = {
     if (!response.success) {
       throw new Error(response.error || 'Failed to set active panel');
     }
+    window.electronAPI.invoke('terminal:mark-viewed', panelId).catch(() => {});
   },
   
   async emitPanelEvent(panelId: string, eventType: string, data: Record<string, unknown>): Promise<void> {

@@ -66,7 +66,7 @@ export function useNotifications() {
   }, []);
 
   // Track previous activityStatus per panelId to detect active -> idle transitions.
-  const prevActivityRef = useRef<Record<string, 'active' | 'idle'>>({});
+  const prevActivityRef = useRef<Record<string, 'active' | 'idle' | 'unviewed'>>({});
 
   // Pending notification timers per panelId. A panel must stay idle for
   // NOTIFICATION_DEBOUNCE_MS after the 5s dot flip before we fire, so we
@@ -176,7 +176,7 @@ export function useNotifications() {
     // Re-check idle at fire time. The debounced timer may fire right as the
     // panel re-activates; without this check we'd ping "finished" for a
     // panel that is actively running again.
-    if (panelStoreState.activityStatus[panelId] !== 'idle') return;
+    if (panelStoreState.activityStatus[panelId] === 'active') return;
 
     // Re-check that no PTY output arrived after the idle transition that
     // scheduled this timer. This catches stale timers around rapid quiet/resume
@@ -240,7 +240,7 @@ export function useNotifications() {
       const prev = prevActivityRef.current;
       for (const [panelId, status] of Object.entries(activityStatus)) {
         const prevStatus = prev[panelId];
-        if (prevStatus === 'active' && status === 'idle') {
+        if (prevStatus === 'active' && (status === 'idle' || status === 'unviewed')) {
           // Schedule a debounced notification. Clear any stale timer first.
           const existing = pending.get(panelId);
           if (existing) clearTimeout(existing);
@@ -250,7 +250,7 @@ export function useNotifications() {
             maybeNotifyPanelIdle(panelId, scheduledLastActivityAt);
           }, NOTIFICATION_DEBOUNCE_MS);
           pending.set(panelId, timer);
-        } else if (prevStatus === 'idle' && status === 'active') {
+        } else if ((prevStatus === 'idle' || prevStatus === 'unviewed') && status === 'active') {
           // Panel woke up before the debounce fired: cancel the pending notification.
           const existing = pending.get(panelId);
           if (existing) {

@@ -4,7 +4,7 @@ export interface PanelStore {
   // State (using plain objects instead of Maps for React reactivity)
   panels: Record<string, ToolPanel[]>;        // sessionId -> panels
   activePanels: Record<string, string>;       // sessionId -> active panelId
-  activityStatus: Record<string, 'active' | 'idle'>; // panelId -> status
+  activityStatus: Record<string, 'active' | 'idle' | 'unviewed'>; // panelId -> status
   lastActivityAt: Record<string, string>;     // panelId -> last PTY output timestamp
 
   // Synchronous state update actions
@@ -13,12 +13,12 @@ export interface PanelStore {
   addPanel: (panel: ToolPanel) => void;
   removePanel: (sessionId: string, panelId: string) => void;
   updatePanelState: (panel: ToolPanel) => void;
-  setActivityStatus: (panelId: string, status: 'active' | 'idle', lastActivityAt?: string) => void;
+  setActivityStatus: (panelId: string, status: 'active' | 'idle' | 'unviewed', lastActivityAt?: string) => void;
   clearActivityStatus: (panelId: string) => void;
 
   // Getters
   getSessionPanels: (sessionId: string) => ToolPanel[];
   getActivePanel: (sessionId: string) => ToolPanel | undefined;
-  getPanelActivityStatus: (panelId: string) => 'active' | 'idle';
-  getSessionActivityStatus: (sessionId: string) => 'active' | 'idle';
+  getPanelActivityStatus: (panelId: string) => 'active' | 'idle' | 'unviewed';
+  getSessionActivityStatus: (sessionId: string) => 'active' | 'idle' | 'unviewed';
 }

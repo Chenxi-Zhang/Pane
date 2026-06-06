@@ -290,7 +290,12 @@ export function Sidebar({ onAboutClick, onSettingsClick, isSettingsOpen, onSetti
                     const isActive = session.id === activeSessionId;
                     const sessionPanels = panelsBySession[session.id] || [];
                     const isSessionActive = sessionPanels.some(p => activityStatus[p.id] === 'active');
-                    const statusColor = isSessionActive ? 'bg-status-warning opacity-100 duration-150' : 'bg-text-muted/20 opacity-40 duration-[3s]';
+                    const hasUnviewed = sessionPanels.some(p => activityStatus[p.id] === 'unviewed');
+                    const statusColor = isSessionActive
+                      ? 'bg-status-info opacity-100 duration-150'
+                      : hasUnviewed
+                        ? 'bg-status-warning opacity-100 duration-150'
+                        : 'bg-text-muted/20 opacity-40 duration-[3s]';
                     const isAnimated = isSessionActive;
                     return (
                       <Tooltip key={session.id} content={<SessionDetailTooltip session={session} />} side="right">

@@ -590,7 +590,9 @@ export const PanelTabBar: React.FC<PanelTabBarProps> = memo(({
                       "w-1.5 h-1.5 rounded-full flex-shrink-0 transition-all",
                       getPanelActivityStatus(panel.id) === 'active'
                         ? 'bg-status-info opacity-100 duration-150'
-                        : 'bg-text-muted/20 opacity-40 duration-[3s]'
+                        : getPanelActivityStatus(panel.id) === 'unviewed'
+                          ? 'bg-status-warning opacity-100 duration-150'
+                          : 'bg-text-muted/20 opacity-40 duration-[3s]'
                     )} />
                   )}
                   {getPanelIcon(panel.type, panel)}
