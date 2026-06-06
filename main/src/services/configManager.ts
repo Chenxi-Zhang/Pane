@@ -308,6 +308,16 @@ export class ConfigManager extends EventEmitter {
     return this.config.usePtyHost === true;
   }
 
+  /**
+   * Whether WSL async commands should use a persistent bash process
+   * to avoid repeated wsl.exe startup overhead. Off by default.
+   * The `PANE_USE_WSL_PERSISTENT_SHELL=1` env var is honored as a dev override.
+   */
+  getUseWSLPersistentShell(): boolean {
+    if (process.env.PANE_USE_WSL_PERSISTENT_SHELL === '1') return true;
+    return this.config.useWSLPersistentShell === true;
+  }
+
   getDatabasePath(): string {
     return path.join(this.configDir, 'sessions.db');
   }

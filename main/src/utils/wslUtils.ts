@@ -1,10 +1,13 @@
-import { execSync as nodeExecSync, execFile } from 'child_process';
+import { execSync as nodeExecSync, execFile, execFileSync as nodeExecFileSync } from 'child_process';
 import { promisify } from 'util';
 
 const execFileAsync = promisify(execFile);
 
 // Cache WSL user's $HOME per distro (one-time detection per distro).
 const wslHomeCache = new Map<string, string>();
+
+// Cache WSL user's default login shell per distro (one-time detection per distro).
+const wslShellCache = new Map<string, string>();
 
 /**
  * Get the WSL user's $HOME directory for a given distro, cached after first call.
@@ -154,24 +157,56 @@ export function buildWSLENV(varNames: readonly string[]): string {
 }
 
 /**
+ * Detect the user's default login shell inside a WSL distro.
+ * Reads from /etc/passwd via getent. Falls back to /bin/bash on failure.
+ */
+export function detectWSLShell(distro: string): string {
+  const cached = wslShellCache.get(distro);
+  if (cached) return cached;
+
+  try {
+    const output = nodeExecFileSync(
+      'wsl.exe',
+      ['-d', distro, '--', 'bash', '-c', 'getent passwd $(whoami) | cut -d: -f7'],
+      { encoding: 'utf8', timeout: 5000 }
+    ).trim();
+
+    if (output && output.startsWith('/')) {
+      wslShellCache.set(distro, output);
+      return output;
+    }
+  } catch {
+    // WSL not ready, distro not found, or getent failed — fall back to bash
+  }
+
+  const fallback = '/bin/bash';
+  wslShellCache.set(distro, fallback);
+  return fallback;
+}
+
+/**
  * Get shell spawn info for opening an interactive WSL terminal.
- * Returns shape compatible with ShellDetector's ShellInfo.
+ * Detects the user's default shell from /etc/passwd (e.g. zsh, fish) instead of
+ * hardcoding bash. Falls back to bash if detection fails.
  */
 export function getWSLShellSpawn(distro: string, cwd?: string): {
   path: string;
   name: string;
   args: string[];
 } {
-  // Use bash -c "cd ... && exec bash" instead of --cd flag.
-  // The --cd flag is broken on many WSL versions (e.g., 2.5.9.0) for Linux paths.
+  const userShell = detectWSLShell(distro);
+  const shellName = userShell.split('/').pop() || 'bash';
+
+  // Use bash -c as bootstrap (always available on WSL) to cd, then exec into
+  // the user's detected default shell with -l for login mode.
   const args = ['-d', distro, '--'];
   if (cwd) {
     const escapedCwd = escapeForBashDoubleQuote(cwd);
-    args.push('bash', '-c', `cd '${escapedCwd}' && exec bash --login`);
+    args.push('bash', '-c', `cd '${escapedCwd}' && exec ${userShell} -l`);
   } else {
-    args.push('bash', '--login');
+    args.push(userShell, '-l');
   }
-  return { path: 'wsl.exe', name: 'wsl', args };
+  return { path: 'wsl.exe', name: shellName, args };
 }
 
 /**

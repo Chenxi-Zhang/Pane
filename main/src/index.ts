@@ -62,6 +62,7 @@ import { createPaneDaemonHost, type PaneDaemonHost } from './daemon/bootstrap';
 import { remotePaneClientController } from './daemon/client/remotePaneClient';
 import { startHeadlessPaneProcess } from './daemon/startHeadless';
 import { runRemoteSetupCli } from './daemon/setupRemoteHostCli';
+import { wslPersistentShellPool } from './utils/wslPersistentShell';
 
 export let mainWindow: BrowserWindow | null = null;
 
@@ -1337,6 +1338,14 @@ if (launchRemoteSetup) {
     console.log('[Main] Destroying all terminal panel processes...');
     terminalPanelManager.destroyAllTerminals();
     console.log('[Main] Terminal panel processes destroyed');
+
+    // Dispose persistent WSL shell pool to prevent orphaned wsl.exe processes
+    try {
+      await wslPersistentShellPool.disposeAll();
+      console.log('[Main] Persistent WSL shell pool disposed');
+    } catch (wslError: unknown) {
+      console.error('[Main] Failed to dispose persistent WSL shell pool:', wslError instanceof Error ? wslError.message : String(wslError));
+    }
 
     // Phase 4: Host/runtime cleanup
     console.log('[Main] Shutting down daemon host services...');

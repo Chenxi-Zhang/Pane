@@ -2,6 +2,7 @@ import { execSync as nodeExecSync, execFileSync as nodeExecFileSync, ExecSyncOpt
 import { promisify } from 'util';
 import { getShellPath } from './shellPath';
 import { WSLContext, getWSLExecArgs } from './wslUtils';
+import { wslPersistentShellPool, isWSLPersistentShellEnabled, createExecFileLikeError, WSLPersistentShellError } from './wslPersistentShell';
 
 const nodeExecAsync = promisify(exec);
 const nodeExecFileAsync = promisify(execFile);
@@ -50,6 +51,7 @@ class CommandExecutor {
     const shellPath = getShellPath();
 
     if (wslContext) {
+      // sync WSL intentionally uses execFileSync; persistent shell is async-only
       // Invoke wsl.exe directly via execFileSync — bypasses cmd.exe entirely,
       // avoiding all cmd.exe escaping issues (%, ^, &, etc.)
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -137,18 +139,59 @@ class CommandExecutor {
     const silentMode = options?.silent === true;
 
     if (wslContext) {
-      // Invoke wsl.exe directly via execFile — bypasses cmd.exe entirely
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { cwd: _cwd, silent: _silent, ...cleanOptions } = options || {};
       const wslCwd = typeof cwd === 'string' ? cwd : undefined;
       const extraEnv = getExtraEnvVars(cleanOptions?.env as Record<string, string | undefined>);
-      const { file, args } = getWSLExecArgs(command, wslContext.distribution, wslCwd, extraEnv);
+      const timeout = cleanOptions?.timeout || 60_000;
+      const maxBuffer = cleanOptions?.maxBuffer || 10 * 1024 * 1024;
 
+      // Try persistent shell path first if enabled
+      if (isWSLPersistentShellEnabled()) {
+        if (!silentMode) {
+          console.log(`[CommandExecutor] Executing async (WSL persistent): ${command} in ${cwd}`);
+        }
+
+        try {
+          const result = await wslPersistentShellPool
+            .getShell(wslContext.distribution)
+            .exec(command, { cwd: wslCwd, env: extraEnv, timeout, maxBuffer, silent: silentMode });
+
+          if (result.exitCode === 0) {
+            if (result.stdout && !silentMode) {
+              const lines = result.stdout.split('\n');
+              const preview = lines[0].substring(0, 100) +
+                              (lines.length > 1 ? ` ... (${lines.length} lines)` : '');
+              console.log(`[CommandExecutor] Async Success: ${preview}`);
+            }
+            return { stdout: result.stdout, stderr: result.stderr };
+          }
+
+          // Non-zero exit: throw execFile-like error
+          throw createExecFileLikeError(command, result);
+        } catch (error: unknown) {
+          // Fallback: if persistent shell failed BEFORE command was written, use execFile
+          if (error instanceof WSLPersistentShellError && !error.commandStarted) {
+            if (!silentMode) {
+              console.warn('[CommandExecutor] Persistent shell failed before command start, falling back to execFile');
+            }
+            // Fall through to execFile path below
+          } else {
+            // Post-start failure or non-WSLPersistentShellError: don't retry
+            if (!silentMode) {
+              console.error(`[CommandExecutor] Async Failed (WSL persistent): ${command}`);
+              console.error(`[CommandExecutor] Async Error: ${error instanceof Error ? error.message : String(error)}`);
+            }
+            throw error;
+          }
+        }
+      }
+
+      // Existing execFile path (fallback or flag-off)
+      const { file, args } = getWSLExecArgs(command, wslContext.distribution, wslCwd, extraEnv);
       if (!silentMode) {
         console.log(`[CommandExecutor] Executing async (WSL): ${file} ${args.join(' ')} in ${cwd}`);
       }
-      const timeout = cleanOptions?.timeout || 60_000;
-      const maxBuffer = cleanOptions?.maxBuffer || 10 * 1024 * 1024;
       const wslOptions: ExecFileOptions = {
         ...cleanOptions,
         timeout,

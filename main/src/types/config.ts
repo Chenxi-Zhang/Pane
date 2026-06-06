@@ -99,6 +99,9 @@ export interface AppConfig {
   // Route PTY spawns through an isolated ptyHost UtilityProcess for crash isolation.
   // Off by default. Requires app restart; the supervisor is forked once at `app.whenReady`.
   usePtyHost?: boolean;
+  // Route short-lived WSL async commands through a persistent bash process
+  // to avoid repeated wsl.exe startup overhead. Off by default.
+  useWSLPersistentShell?: boolean;
   // PostHog analytics settings
   analytics?: AnalyticsConfig;
   // User-defined custom commands for the Add Tool picker
@@ -162,6 +165,7 @@ export interface UpdateConfigRequest {
   // Route PTY spawns through an isolated ptyHost UtilityProcess for crash isolation.
   // Off by default. Requires app restart to take effect.
   usePtyHost?: boolean;
+  useWSLPersistentShell?: boolean;
   // PostHog analytics settings
   analytics?: AnalyticsConfig;
   // User-defined custom commands for the Add Tool picker
