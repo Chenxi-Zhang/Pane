@@ -619,8 +619,8 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
           if (ctrlOrMeta && (e.key.toLowerCase() === 'w' || e.key.toLowerCase() === 'q')) return false;
           // Ctrl/Cmd+T: open Add Tool dropdown
           if (ctrlOrMeta && e.key.toLowerCase() === 't') return false;
-          // Ctrl/Cmd+P: prompt history; Ctrl/Cmd+Shift+P: command palette
-          if (ctrlOrMeta && e.key.toLowerCase() === 'p') return false;
+          // Ctrl/Cmd+Shift+P: command palette
+          if (ctrlOrMeta && e.shiftKey && e.key.toLowerCase() === 'p') return false;
           // Ctrl/Cmd+N: new workspace
           if (ctrlOrMeta && e.key.toLowerCase() === 'n') return false;
           // Ctrl/Cmd+Shift+D: toggle diff
