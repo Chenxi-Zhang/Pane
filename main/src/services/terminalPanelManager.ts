@@ -172,6 +172,15 @@ export class TerminalPanelManager {
 
   setActiveViewedSession(sessionId: string | null): void {
     this.activeViewedSessionId = sessionId;
+
+    if (!sessionId) return;
+    const activePanel = databaseService.getActivePanel(sessionId);
+    if (!activePanel) return;
+    const terminal = this.terminals.get(activePanel.id);
+    if (terminal && terminal.activityStatus === 'unviewed') {
+      terminal.activityStatus = 'idle';
+      this.emitActivityStatus(terminal);
+    }
   }
 
   private getCliAgentType(command?: string): CliAgentType | undefined {
