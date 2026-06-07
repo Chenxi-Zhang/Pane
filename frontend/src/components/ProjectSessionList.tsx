@@ -395,10 +395,18 @@ export function ProjectSessionList({
           const isExpanded = expandedProjects.has(project.id);
           const projectSessions = sessionsByProject.get(project.id) || [];
 
-          const projectActivity = projectSessions.some(s => {
+          const projectActivityStatuses = projectSessions.map(s => {
             const sessionPanels = panelPanels[s.id] || [];
-            return sessionPanels.some(p => panelActivityStatus[p.id] === 'active');
-          }) ? 'active' : 'idle';
+            const statuses = sessionPanels.map(p => panelActivityStatus[p.id]).filter(Boolean);
+            if (statuses.includes('active')) return 'active' as const;
+            if (statuses.includes('unviewed')) return 'unviewed' as const;
+            return 'idle' as const;
+          });
+          const projectActivity = projectActivityStatuses.includes('active')
+            ? 'active'
+            : projectActivityStatuses.includes('unviewed')
+              ? 'unviewed'
+              : 'idle';
 
           const projectMenuItems: DropdownItem[] = [
             {
@@ -448,12 +456,17 @@ export function ProjectSessionList({
                 <Tooltip content={<span className="text-[10px] text-text-tertiary font-mono break-all">{project.path}</span>} side="right">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 min-w-0">
-                      <span className={cn(
-                        "w-1.5 h-1.5 rounded-full flex-shrink-0 transition-all",
-                        projectActivity === 'active'
-                          ? 'bg-status-info opacity-100 duration-150'
-                          : 'bg-text-muted/20 opacity-40 duration-[3s]'
-                      )} />
+                      {!isExpanded && (
+                        <span className={cn(
+                          "w-1.5 h-1.5 rounded-full flex-shrink-0 transition-all",
+                          projectActivity === 'active'
+                            ? 'bg-status-info opacity-100 duration-150 animate-pulse'
+                            : projectActivity === 'unviewed'
+                              ? 'bg-status-warning opacity-100 duration-150'
+                              : 'bg-text-muted/20 opacity-40 duration-[3s]'
+                        )} />
+                      )}
+                      {isExpanded && <span className="w-1.5 h-1.5 flex-shrink-0" />}
                       <span className="text-xs font-semibold text-text-primary truncate">{project.name}</span>
                     </div>
                   </div>

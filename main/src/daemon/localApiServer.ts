@@ -2,7 +2,7 @@ import http, { type IncomingMessage, type ServerResponse } from 'http';
 import { terminalPanelManager } from '../services/terminalPanelManager';
 
 const LOCAL_API_PORT = 11777;
-const LOCAL_API_HOST = '127.0.0.1';
+const LOCAL_API_HOST = '0.0.0.0';
 
 type ExternalActivityStatus = 'active' | 'idle';
 

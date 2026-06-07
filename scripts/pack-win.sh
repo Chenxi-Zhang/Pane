@@ -316,9 +316,13 @@ if [ -n "${ELECTRON_BUILDER_BINARIES_MIRROR:-}" ]; then
   info "Using ELECTRON_BUILDER_BINARIES_MIRROR: ${ELECTRON_BUILDER_BINARIES_MIRROR}"
 fi
 
+# Cache Electron and electron-builder downloads so they aren't re-downloaded every build.
+CACHE_ENV="\$env:ELECTRON_CACHE = \"\$env:LOCALAPPDATA\\electron\\Cache\"; "
+CACHE_ENV="${CACHE_ENV}\$env:ELECTRON_BUILDER_CACHE = \"\$env:LOCALAPPDATA\\electron-builder\\Cache\"; "
+
 info "Running electron-builder --win portable --${ARCH}..."
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "
-  ${MIRROR_ENV}\$env:ELECTRON_BUILDER_ALLOW_UNRESOLVED_DEPENDENCIES = 'true'
+  ${CACHE_ENV}${MIRROR_ENV}\$env:ELECTRON_BUILDER_ALLOW_UNRESOLVED_DEPENDENCIES = 'true'
   Set-Location '${WIN_TEMP_DIR}'
   Write-Host 'Running: npx electron-builder --win portable --${ARCH} --publish never --config.npmRebuild=false'
   npx electron-builder --win portable --${ARCH} --publish never --config.npmRebuild=false 2>&1

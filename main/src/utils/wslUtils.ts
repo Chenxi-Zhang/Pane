@@ -1,7 +1,38 @@
 import { execSync as nodeExecSync, execFile, execFileSync as nodeExecFileSync } from 'child_process';
+import * as os from 'os';
 import { promisify } from 'util';
 
 const execFileAsync = promisify(execFile);
+
+let cachedWslHostIp: string | null | undefined;
+
+/**
+ * Find the Windows-side IP address reachable from WSL2 guests.
+ *
+ * WSL2 uses a Hyper-V virtual switch — the host's adapter is named
+ * "vEthernet (WSL…)" and carries the gateway IP that Linux guests
+ * route through.  We resolve it once and cache.
+ *
+ * Returns `null` when not on Windows or when no WSL adapter is found.
+ */
+export function getWslHostIp(): string | null {
+  if (process.platform !== 'win32') return null;
+  if (cachedWslHostIp !== undefined) return cachedWslHostIp;
+
+  const interfaces = os.networkInterfaces();
+  for (const [name, addrs] of Object.entries(interfaces)) {
+    if (!addrs) continue;
+    if (!name.toLowerCase().includes('wslenv') && !name.toLowerCase().includes('vethernet')) continue;
+    const ipv4 = addrs.find(a => a.family === 'IPv4' && !a.internal);
+    if (ipv4) {
+      cachedWslHostIp = ipv4.address;
+      return cachedWslHostIp;
+    }
+  }
+
+  cachedWslHostIp = null;
+  return null;
+}
 
 // Cache WSL user's $HOME per distro (one-time detection per distro).
 const wslHomeCache = new Map<string, string>();

@@ -8,7 +8,7 @@ import * as path from 'path';
 import { getShellPath } from '../utils/shellPath';
 import { ShellDetector } from '../utils/shellDetector';
 import type { AnalyticsManager } from './analyticsManager';
-import { getWSLShellSpawn, buildWSLENV, WSLContext } from '../utils/wslUtils';
+import { getWSLShellSpawn, buildWSLENV, WSLContext, getWslHostIp } from '../utils/wslUtils';
 import { GIT_ATTRIBUTION_ENV } from '../utils/attribution';
 import {
   type FlowControlRecord,
@@ -673,6 +673,7 @@ export class TerminalPanelManager {
             'PANE_PANEL_ID',
             'WORKTREE_PATH',
             'PANE_WORKSPACE_PATH',
+            'PANE_LOCAL_API_URL',
           ]),
         }
       : {};
@@ -702,6 +703,9 @@ export class TerminalPanelManager {
       PANE_PANEL_ID: panel.id,
       PANE_PORT: String(panePort),
       PANE_WORKSPACE_PATH: cwd,
+      PANE_LOCAL_API_URL: isWSL
+        ? `http://${getWslHostIp() || '127.0.0.1'}:11777`
+        : `http://127.0.0.1:11777`,
       ...wslEnvVars,
     };
 
