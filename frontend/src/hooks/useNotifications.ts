@@ -65,8 +65,7 @@ export function useNotifications() {
     return unsubscribe;
   }, []);
 
-  // Track previous activityStatus per panelId to detect active -> idle transitions.
-  const prevActivityRef = useRef<Record<string, 'active' | 'idle' | 'unviewed'>>({});
+  const prevActivityRef = useRef<Record<string, 'active' | 'idle' | 'unviewed' | 'waiting_for_input'>>({});
 
   // Pending notification timers per panelId. A panel must stay idle for
   // NOTIFICATION_DEBOUNCE_MS after the 5s dot flip before we fire, so we
@@ -222,6 +221,45 @@ export function useNotifications() {
     );
   }
 
+  function maybeNotifyPanelWaitingForInput(panelId: string) {
+    const currentSettings = settingsRef.current;
+    if (!currentSettings.enabled) return;
+
+    if (windowFocusedRef.current) return;
+
+    const panelStoreState = usePanelStore.getState();
+    if (panelStoreState.activityStatus[panelId] !== 'waiting_for_input') return;
+
+    let foundSessionId: string | undefined;
+    let foundPanel: ToolPanel | undefined;
+    for (const [sessionId, panels] of Object.entries(panelStoreState.panels)) {
+      const panel = panels.find((p) => p.id === panelId);
+      if (panel) {
+        foundSessionId = sessionId;
+        foundPanel = panel;
+        break;
+      }
+    }
+    if (!foundSessionId || !foundPanel) return;
+
+    const sessionStoreState = useSessionStore.getState();
+    const session = sessionStoreState.sessions.find((s) => s.id === foundSessionId);
+    if (!session) return;
+
+    const projectName = session.projectId
+      ? projectNamesRef.current.get(session.projectId) ?? ''
+      : '';
+    const panelName = foundPanel.title || 'Terminal';
+
+    showNotification(
+      `⏳ ${panelName} needs your input`,
+      projectName ? `${session.name} · ${projectName}` : session.name,
+      undefined,
+      'panel_waiting_for_input',
+      `waiting_for_input:${panelId}:${Date.now()}`,
+    );
+  }
+
   // Subscribe to panelStore.activityStatus and schedule notifications on
   // active -> idle transitions, firing only after the panel has stayed idle
   // for NOTIFICATION_DEBOUNCE_MS. Re-activation cancels the pending timer,
@@ -240,7 +278,14 @@ export function useNotifications() {
       const prev = prevActivityRef.current;
       for (const [panelId, status] of Object.entries(activityStatus)) {
         const prevStatus = prev[panelId];
-        if (prevStatus === 'active' && (status === 'idle' || status === 'unviewed')) {
+        if (prevStatus === 'active' && status === 'waiting_for_input') {
+          const existing = pending.get(panelId);
+          if (existing) {
+            clearTimeout(existing);
+            pending.delete(panelId);
+          }
+          maybeNotifyPanelWaitingForInput(panelId);
+        } else if (prevStatus === 'active' && (status === 'idle' || status === 'unviewed')) {
           // Schedule a debounced notification. Clear any stale timer first.
           const existing = pending.get(panelId);
           if (existing) clearTimeout(existing);
@@ -250,7 +295,7 @@ export function useNotifications() {
             maybeNotifyPanelIdle(panelId, scheduledLastActivityAt);
           }, NOTIFICATION_DEBOUNCE_MS);
           pending.set(panelId, timer);
-        } else if ((prevStatus === 'idle' || prevStatus === 'unviewed') && status === 'active') {
+        } else if ((prevStatus === 'idle' || prevStatus === 'unviewed' || prevStatus === 'waiting_for_input') && status === 'active') {
           // Panel woke up before the debounce fired: cancel the pending notification.
           const existing = pending.get(panelId);
           if (existing) {

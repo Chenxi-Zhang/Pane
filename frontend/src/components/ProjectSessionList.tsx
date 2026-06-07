@@ -399,14 +399,17 @@ export function ProjectSessionList({
             const sessionPanels = panelPanels[s.id] || [];
             const statuses = sessionPanels.map(p => panelActivityStatus[p.id]).filter(Boolean);
             if (statuses.includes('active')) return 'active' as const;
+            if (statuses.includes('waiting_for_input')) return 'waiting_for_input' as const;
             if (statuses.includes('unviewed')) return 'unviewed' as const;
             return 'idle' as const;
           });
           const projectActivity = projectActivityStatuses.includes('active')
             ? 'active'
-            : projectActivityStatuses.includes('unviewed')
-              ? 'unviewed'
-              : 'idle';
+            : projectActivityStatuses.includes('waiting_for_input')
+              ? 'waiting_for_input'
+              : projectActivityStatuses.includes('unviewed')
+                ? 'unviewed'
+                : 'idle';
 
           const projectMenuItems: DropdownItem[] = [
             {
@@ -458,15 +461,17 @@ export function ProjectSessionList({
                     <div className="flex items-center gap-1.5 min-w-0">
                       {!isExpanded && (
                         <span className={cn(
-                          "w-1.5 h-1.5 rounded-full flex-shrink-0 transition-all",
+                          "w-2 h-2 rounded-full flex-shrink-0 transition-all",
                           projectActivity === 'active'
-                            ? 'bg-status-info opacity-100 duration-150 animate-pulse'
-                            : projectActivity === 'unviewed'
-                              ? 'bg-status-warning opacity-100 duration-150'
-                              : 'bg-text-muted/20 opacity-40 duration-[3s]'
+                            ? 'border-2 border-status-info bg-transparent'
+                            : projectActivity === 'waiting_for_input'
+                              ? 'bg-orange-400 animate-pulse'
+                              : projectActivity === 'unviewed'
+                                ? 'bg-status-info'
+                                : 'bg-text-muted/20 opacity-40'
                         )} />
                       )}
-                      {isExpanded && <span className="w-1.5 h-1.5 flex-shrink-0" />}
+                      {isExpanded && <span className="w-2 h-2 flex-shrink-0" />}
                       <span className="text-xs font-semibold text-text-primary truncate">{project.name}</span>
                     </div>
                   </div>
@@ -604,6 +609,7 @@ function SessionRow({
     const sessionPanels = s.panels[session.id] || [];
     const statuses = sessionPanels.map(p => s.activityStatus[p.id]).filter(Boolean);
     if (statuses.includes('active')) return 'active';
+    if (statuses.includes('waiting_for_input')) return 'waiting_for_input';
     if (statuses.includes('unviewed')) return 'unviewed';
     return 'idle';
   });
@@ -662,8 +668,8 @@ function SessionRow({
   const adds = (gs?.commitAdditions ?? 0) + (gs?.additions ?? 0);
   const dels = (gs?.commitDeletions ?? 0) + (gs?.deletions ?? 0);
   const hasDiff = adds > 0 || dels > 0;
-  const showActivityRail = sessionActivity === 'active' || sessionActivity === 'unviewed';
-  const activityRailColor = sessionActivity === 'active' ? 'bg-status-info' : 'bg-status-warning';
+  const showActivityRail = sessionActivity === 'active' || sessionActivity === 'waiting_for_input' || sessionActivity === 'unviewed';
+  const activityRailColor = sessionActivity === 'waiting_for_input' ? 'bg-orange-400' : 'bg-status-info';
 
   return (
     <Tooltip
@@ -689,7 +695,7 @@ function SessionRow({
         }}
       >
         {showActivityRail && (
-          <span className={`pointer-events-none absolute left-0 top-0 h-full w-1 ${activityRailColor} ${sessionActivity === 'active' ? 'animate-pulse' : ''}`} />
+          <span className={`pointer-events-none absolute left-0 top-0 h-full w-1 ${activityRailColor} ${sessionActivity === 'waiting_for_input' ? 'animate-pulse' : ''}`} />
         )}
 
         <SessionRowContent

@@ -798,7 +798,7 @@ export function registerPanelHandlers(
     return { success: true };
   });
 
-  commandRegistry.register('terminal:set-external-activity', async (identifier: string, status: 'active' | 'idle') => {
+  commandRegistry.register('terminal:set-external-activity', async (identifier: string, status: 'active' | 'idle' | 'waiting_for_input') => {
     return terminalPanelManager.setExternalActivityStatus(identifier, status);
   });
 

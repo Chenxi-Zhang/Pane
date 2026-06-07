@@ -4,7 +4,7 @@ import { terminalPanelManager } from '../services/terminalPanelManager';
 const LOCAL_API_PORT = 11777;
 const LOCAL_API_HOST = '0.0.0.0';
 
-type ExternalActivityStatus = 'active' | 'idle';
+type ExternalActivityStatus = 'active' | 'idle' | 'waiting_for_input';
 
 interface LocalApiResponse {
   ok: boolean;
@@ -127,7 +127,7 @@ export class PaneLocalApiServer {
       console.warn('[Pane local API] 400 invalid body:', body);
       this.writeJson(response, 400, {
         ok: false,
-        error: 'Body must be { "identifier": string, "status": "active" | "idle" }',
+        error: 'Body must be { "identifier": string, "status": "active" | "idle" | "waiting_for_input" }',
       });
       return;
     }
@@ -179,6 +179,6 @@ function isActivityRequest(value: unknown): value is ActivityRequest {
   return (
     typeof candidate.identifier === 'string' &&
     candidate.identifier.length > 0 &&
-    (candidate.status === 'active' || candidate.status === 'idle')
+    (candidate.status === 'active' || candidate.status === 'idle' || candidate.status === 'waiting_for_input')
   );
 }

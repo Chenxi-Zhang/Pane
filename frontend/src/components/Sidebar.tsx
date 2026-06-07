@@ -289,13 +289,15 @@ export function Sidebar({ onAboutClick, onSettingsClick, isSettingsOpen, onSetti
                     const isActive = session.id === activeSessionId;
                     const sessionPanels = panelsBySession[session.id] || [];
                     const isSessionActive = sessionPanels.some(p => activityStatus[p.id] === 'active');
+                    const isWaitingForInput = sessionPanels.some(p => activityStatus[p.id] === 'waiting_for_input');
                     const hasUnviewed = sessionPanels.some(p => activityStatus[p.id] === 'unviewed');
-                    const statusColor = isSessionActive
-                      ? 'bg-status-info opacity-100 duration-150'
-                      : hasUnviewed
-                        ? 'bg-status-warning opacity-100 duration-150'
-                        : 'bg-text-muted/20 opacity-40 duration-[3s]';
-                    const isAnimated = isSessionActive;
+                    const statusStyle = isSessionActive
+                      ? 'border-2 border-status-info bg-transparent'
+                      : isWaitingForInput
+                        ? 'bg-orange-400 animate-pulse'
+                        : hasUnviewed
+                          ? 'bg-status-info'
+                          : 'bg-text-muted/20 opacity-40';
                     return (
                       <Tooltip key={session.id} content={<SessionDetailTooltip session={session} />} side="right">
                         <button
@@ -309,7 +311,7 @@ export function Sidebar({ onAboutClick, onSettingsClick, isSettingsOpen, onSetti
                            * TODO: Evolve into richer interactive badges with session identity
                            * (e.g., initials, mini name) and better click-to-navigate affordance.
                            */}
-                          <div className={`w-2.5 h-2.5 rounded-full transition-all ${statusColor} ${isAnimated ? 'animate-pulse' : ''}`} />
+                          <div className={`w-2.5 h-2.5 rounded-full transition-all ${statusStyle}`} />
                         </button>
                       </Tooltip>
                     );

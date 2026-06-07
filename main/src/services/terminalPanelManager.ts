@@ -147,7 +147,7 @@ interface TerminalProcess {
   isVisible: boolean;
   // Alternate screen buffer tracking — universal TUI detection signal
   isAlternateScreen: boolean;
-  activityStatus: 'active' | 'idle' | 'unviewed';
+  activityStatus: 'active' | 'idle' | 'unviewed' | 'waiting_for_input';
   idleTimer: ReturnType<typeof setTimeout> | null;
   // Once an external tool signals activity status, PTY output no longer
   // controls the status dot — the external source owns it permanently.
@@ -1363,10 +1363,11 @@ export class TerminalPanelManager {
    *                    - sessionId (matches any terminal in that session)
    *                    - worktree / cwd path (matches terminal whose session
    *                      has that worktree_path, or whose cwd matches)
-   * @param status      `'active'` to mark as working, `'idle'` to mark as done.
+   * @param status      `'active'` to mark as working, `'idle'` to mark as done,
+   *                    or `'waiting_for_input'` to mark as needing user interaction.
    * @returns `true` if a matching terminal was found and updated.
    */
-  setExternalActivityStatus(identifier: string, status: 'active' | 'idle'): boolean {
+  setExternalActivityStatus(identifier: string, status: 'active' | 'idle' | 'waiting_for_input'): boolean {
      let terminal = this.findTerminalByIdentifier(identifier);
 
     if (!terminal) {
@@ -1380,7 +1381,9 @@ export class TerminalPanelManager {
     terminal.externalActivityControlled = true;
     terminal.lastActivity = new Date();
 
-    if (status === 'idle') {
+    if (status === 'waiting_for_input') {
+      terminal.activityStatus = 'waiting_for_input';
+    } else if (status === 'idle') {
       if (this.activeViewedSessionId !== terminal.sessionId) {
         terminal.activityStatus = 'unviewed';
       } else {

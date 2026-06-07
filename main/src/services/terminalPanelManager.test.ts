@@ -53,7 +53,7 @@ type TerminalUnderTest = {
   outputFlushTimer: ReturnType<typeof setTimeout> | null;
   isVisible: boolean;
   isAlternateScreen: boolean;
-  activityStatus: 'active' | 'idle';
+  activityStatus: 'active' | 'idle' | 'waiting_for_input';
   idleTimer: ReturnType<typeof setTimeout> | null;
   inSyncBlock: boolean;
   codexResumeOutputBuffer: string;
