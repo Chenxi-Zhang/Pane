@@ -867,8 +867,8 @@ function HeadlessFileTree({
           {getFilteredFiles().map(file => (
             <div
               key={file.path}
-              className={`flex items-center px-2 py-1 hover:bg-surface-hover cursor-pointer group ${
-                selectedPath === file.path ? 'bg-interactive' : ''
+              className={`flex items-center px-2 py-1 cursor-pointer group ${
+                selectedPath === file.path ? 'bg-interactive hover:bg-interactive-hover' : 'hover:bg-surface-hover'
               }`}
               style={{ paddingLeft: '8px' }}
               onClick={() => {
@@ -935,8 +935,8 @@ function HeadlessFileTree({
                 if (element) itemElementRefs.current.set(data.path, element);
                 else itemElementRefs.current.delete(data.path);
               }}
-              className={`flex items-center px-2 py-1 hover:bg-surface-hover cursor-pointer group ${
-                isItemSelected ? 'bg-interactive' : ''
+              className={`flex items-center px-2 py-1 cursor-pointer group ${
+                isItemSelected ? 'bg-interactive hover:bg-interactive-hover' : 'hover:bg-surface-hover'
               } ${
                 isOpenFile && !isItemSelected ? 'bg-surface-hover/60' : ''
               } ${
@@ -972,6 +972,7 @@ function HeadlessFileTree({
                   item.selectUpTo(false);
                 } else {
                   item.select();
+                  setSelectedItems([data.path]);
                 }
                 if (isFolder) {
                   if (isExpanded) item.collapse();
