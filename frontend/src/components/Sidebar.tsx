@@ -234,8 +234,7 @@ export function Sidebar({ onAboutClick, onSettingsClick, isSettingsOpen, onSetti
   }, [projects, activeProjectId]);
 
   // Collapsed sidebar view
-  const immersiveMode = useNavigationStore(s => s.immersiveMode);
-  if (collapsed || immersiveMode) {
+  if (collapsed) {
     return (
       <>
         <div

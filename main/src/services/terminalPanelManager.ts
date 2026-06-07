@@ -168,6 +168,11 @@ export class TerminalPanelManager {
   // Spawn concurrency limiter — prevents CPU spikes when many terminals init at once
   private activeSpawns = 0;
   private spawnQueue: Array<{ resolve: () => void; priority: number }> = [];
+  private activeViewedSessionId: string | null = null;
+
+  setActiveViewedSession(sessionId: string | null): void {
+    this.activeViewedSessionId = sessionId;
+  }
 
   private getCliAgentType(command?: string): CliAgentType | undefined {
     const lower = command?.toLowerCase() ?? '';
@@ -1367,8 +1372,12 @@ export class TerminalPanelManager {
     terminal.lastActivity = new Date();
 
     if (status === 'idle') {
-      const activePanel = databaseService.getActivePanel(terminal.sessionId);
-      terminal.activityStatus = activePanel?.id === terminal.panelId ? 'idle' : 'unviewed';
+      if (this.activeViewedSessionId !== terminal.sessionId) {
+        terminal.activityStatus = 'unviewed';
+      } else {
+        const activePanel = databaseService.getActivePanel(terminal.sessionId);
+        terminal.activityStatus = activePanel?.id === terminal.panelId ? 'idle' : 'unviewed';
+      }
     } else {
       terminal.activityStatus = status;
     }

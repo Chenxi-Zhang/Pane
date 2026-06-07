@@ -85,22 +85,14 @@ function App() {
   const activeProjectId = useNavigationStore(s => s.activeProjectId);
   const sidebarCollapsed = useNavigationStore(s => s.sidebarCollapsed);
   const setSidebarCollapsed = useNavigationStore(s => s.setSidebarCollapsed);
-  const immersiveMode = useNavigationStore(s => s.immersiveMode);
-  const setImmersiveMode = useNavigationStore(s => s.setImmersiveMode);
 
-  // When in immersive mode, the sidebar is forced collapsed.
-  // The toggle button needs to clear immersive mode to expand, not just toggle sidebarCollapsed.
   const handleToggleSidebar = useCallback(() => {
-    const isVisuallyCollapsed = immersiveMode || sidebarCollapsed;
-    if (isVisuallyCollapsed) {
-      // User wants to expand
-      if (immersiveMode) setImmersiveMode(false);
-      if (sidebarCollapsed) setSidebarCollapsed(false);
+    if (sidebarCollapsed) {
+      setSidebarCollapsed(false);
     } else {
-      // User wants to collapse
       setSidebarCollapsed(true);
     }
-  }, [immersiveMode, sidebarCollapsed, setImmersiveMode, setSidebarCollapsed]);
+  }, [sidebarCollapsed, setSidebarCollapsed]);
   const { currentError, clearError } = useErrorStore();
   const { sessions, isLoaded } = useSessionStore();
   const { fetchConfig, config: appConfig } = useConfigStore();
@@ -158,7 +150,7 @@ function App() {
     keys: 'mod+shift+e',
     category: 'navigation',
     action: () => {
-      if (sidebarCollapsed || immersiveMode) handleToggleSidebar();
+      if (sidebarCollapsed) handleToggleSidebar();
     },
   });
 
@@ -614,7 +606,7 @@ function App() {
         <MainProcessLogger />
         <div
           className="pane-sidebar-slot flex-shrink-0 overflow-hidden transition-[width] duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]"
-          style={{ width: (immersiveMode || sidebarCollapsed) ? '48px' : `${sidebarWidth}px` }}
+          style={{ width: sidebarCollapsed ? '48px' : `${sidebarWidth}px` }}
         >
           <Sidebar
             onAboutClick={() => setIsAboutOpen(true)}

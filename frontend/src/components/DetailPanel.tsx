@@ -1,6 +1,5 @@
 import React, { useMemo } from 'react';
 import { useSession } from '../contexts/SessionContext';
-import { useNavigationStore } from '../stores/navigationStore';
 import { GitBranch, AlertTriangle, Code2, Settings, Link, TerminalSquare, ChevronUp, ChevronDown, ArrowLeftRight } from 'lucide-react';
 import { Button } from './ui/Button';
 import { Tooltip } from './ui/Tooltip';
@@ -77,7 +76,6 @@ function actionTooltip(action: { description?: string; disabled?: boolean; disab
 
 export function DetailPanel({ isVisible, width, height, onResize, mergeError, projectGitActions, orientation, isCollapsed, onToggleCollapse, onSwapLayout, terminalShortcuts, onCommitClick }: DetailPanelProps) {
   const sessionContext = useSession();
-  const immersiveMode = useNavigationStore(s => s.immersiveMode);
   const remoteIdeTooltip = 'Open in IDE is only available in local mode. Switch this client back to the local runtime to use your desktop IDE.';
 
   // Build IDE dropdown items, sending safe IDE keys (resolved to commands server-side)
@@ -112,8 +110,8 @@ export function DetailPanel({ isVisible, width, height, onResize, mergeError, pr
   if (orientation === 'horizontal') {
     return (
       <div
-        className={`pane-detail-panel pane-detail-panel-horizontal flex-shrink-0 bg-surface-primary flex flex-col overflow-hidden relative transition-[height] duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] ${immersiveMode ? '' : 'border-t border-border-primary'}`}
-        style={{ height: immersiveMode ? '0px' : isCollapsed ? 'auto' : `${height ?? 200}px` }}
+        className={`pane-detail-panel pane-detail-panel-horizontal flex-shrink-0 bg-surface-primary flex flex-col overflow-hidden relative transition-[height] duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] border-t border-border-primary`}
+        style={{ height: isCollapsed ? 'auto' : `${height ?? 200}px` }}
       >
         {/* Resize handle at top edge */}
         {!isCollapsed && (
@@ -253,8 +251,8 @@ export function DetailPanel({ isVisible, width, height, onResize, mergeError, pr
 
   return (
     <div
-      className={`pane-detail-panel pane-detail-panel-vertical flex-shrink-0 min-w-0 bg-surface-primary flex flex-col overflow-hidden relative transition-[width] duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] ${isVisible && !immersiveMode ? 'border-l border-border-primary' : ''}`}
-      style={{ width: isVisible && !immersiveMode ? `${width}px` : '0px' }}
+      className={`pane-detail-panel pane-detail-panel-vertical flex-shrink-0 min-w-0 bg-surface-primary flex flex-col overflow-hidden relative transition-[width] duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] ${isVisible ? 'border-l border-border-primary' : ''}`}
+      style={{ width: isVisible ? `${width}px` : '0px' }}
     >
       {/* Resize handle */}
       <div
