@@ -12,33 +12,39 @@ export class PermissionIpcServer {
   private socketPath: string;
 
   constructor() {
-    // Use a directory without spaces for better compatibility
-    // DMG apps can write to user's home directory
-    let socketDir: string;
-    try {
-      socketDir = getAppSubdirectory('sockets');
-      
-      // Ensure the directory exists
-      if (!fs.existsSync(socketDir)) {
-        fs.mkdirSync(socketDir, { recursive: true });
+    if (process.platform === 'win32') {
+      // Windows: use named pipe (\\.\pipe\...) which is the Windows equivalent
+      // of Unix domain sockets. File-based .sock paths cause EACCES on Windows.
+      this.socketPath = `\\\\.\\pipe\\pane-permissions-${process.pid}`;
+    } else {
+      // Unix: use file-based socket in the app's sockets directory
+      let socketDir: string;
+      try {
+        socketDir = getAppSubdirectory('sockets');
+
+        // Ensure the directory exists
+        if (!fs.existsSync(socketDir)) {
+          fs.mkdirSync(socketDir, { recursive: true });
+        }
+
+        // Test write access
+        const testFile = path.join(socketDir, '.test');
+        fs.writeFileSync(testFile, 'test');
+        fs.unlinkSync(testFile);
+      } catch (error) {
+        console.error('[Permission IPC] Failed to create socket directory, falling back to system temp:', error);
+        socketDir = os.tmpdir();
       }
-      
-      // Test write access
-      const testFile = path.join(socketDir, '.test');
-      fs.writeFileSync(testFile, 'test');
-      fs.unlinkSync(testFile);
-    } catch (error) {
-      console.error('[Permission IPC] Failed to create socket directory, falling back to system temp:', error);
-      socketDir = os.tmpdir();
+
+      this.socketPath = path.join(socketDir, `pane-permissions-${process.pid}.sock`);
     }
-    
-    this.socketPath = path.join(socketDir, `pane-permissions-${process.pid}.sock`);
   }
 
   start(): Promise<void> {
     return new Promise((resolve, reject) => {
-      // Clean up any existing socket file
-      if (fs.existsSync(this.socketPath)) {
+      // Clean up any existing socket file (Unix only — named pipes on Windows
+      // have no filesystem entry)
+      if (process.platform !== 'win32' && fs.existsSync(this.socketPath)) {
         fs.unlinkSync(this.socketPath);
       }
 
@@ -117,8 +123,8 @@ export class PermissionIpcServer {
 
       if (this.server) {
         this.server.close(() => {
-          // Clean up socket file
-          if (fs.existsSync(this.socketPath)) {
+          // Clean up socket file (Unix only)
+          if (process.platform !== 'win32' && fs.existsSync(this.socketPath)) {
             fs.unlinkSync(this.socketPath);
           }
           resolve();
