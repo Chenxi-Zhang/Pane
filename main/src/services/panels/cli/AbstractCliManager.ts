@@ -711,8 +711,9 @@ export abstract class AbstractCliManager extends EventEmitter {
                 cols: 80,
                 rows: 30,
                 cwd,
-                env
-              });
+                env,
+                useConptyDll: os.platform() === 'win32' ? true : undefined,
+              } as pty.IWindowsPtyForkOptions);
         } else {
           // Second attempt or if we know we need Node.js: use Node.js directly.
           // The Phase 0 `wrapSpawnArgs` hook fires ONCE in `spawnCliProcess` before
@@ -755,8 +756,9 @@ export abstract class AbstractCliManager extends EventEmitter {
                 cols: 80,
                 rows: 30,
                 cwd,
-                env
-              });
+                env,
+                useConptyDll: os.platform() === 'win32' ? true : undefined,
+              } as pty.IWindowsPtyForkOptions);
         }
 
         const spawnTime = Date.now() - startTime;
@@ -834,6 +836,7 @@ export abstract class AbstractCliManager extends EventEmitter {
       rows,
       env,
       name: 'xterm-256color',
+      useConptyDll: os.platform() === 'win32',
     });
 
     const handle = supervisor.getHandle(ptyId);

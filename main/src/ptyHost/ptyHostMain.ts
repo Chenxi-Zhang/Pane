@@ -214,6 +214,8 @@ function handleSpawn(id: number, opts: PtyHostSpawnOpts): void {
       cols: opts.cols,
       rows: opts.rows,
       env: opts.env,
+      // Bundled OpenConsole.exe provides VT mouse support missing on Win10 system ConPTY.
+      useConptyDll: opts.useConptyDll ?? false,
     }) as unknown as HostPty;
   } catch (err) {
     const classified = classifySpawnError(err);

@@ -755,6 +755,7 @@ export class TerminalPanelManager {
         rows: spawnRows,
         env: spawnEnv,
         name: 'xterm-256color',
+        useConptyDll: process.platform === 'win32',
       });
       const handle = supervisor.getHandle(spawned.ptyId);
       if (!handle) {
@@ -770,7 +771,8 @@ export class TerminalPanelManager {
         rows: spawnRows,
         cwd: spawnCwd,
         env: spawnEnv,
-      });
+        useConptyDll: process.platform === 'win32' ? true : undefined,
+      } as pty.IWindowsPtyForkOptions);
     }
 
     // Create terminal process object

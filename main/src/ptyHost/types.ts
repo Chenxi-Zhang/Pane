@@ -28,6 +28,13 @@ export interface PtyHostSpawnOpts {
   env: Record<string, string>;
   /** Terminal type name; defaults to `xterm-256color` in the host when omitted. */
   name?: string;
+  /**
+   * Whether to use the conpty.dll shipped with node-pty instead of the system one.
+   * When true, node-pty loads its bundled OpenConsole.exe which includes VT mouse
+   * support (missing on Windows 10 system ConPTY). Defaults to false.
+   * Ignored on non-Windows platforms.
+   */
+  useConptyDll?: boolean;
 }
 
 /**

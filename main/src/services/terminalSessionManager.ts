@@ -171,6 +171,7 @@ export class TerminalSessionManager extends EventEmitter {
         rows: spawnRows,
         env: envStr,
         name: 'xterm-256color',
+        useConptyDll: process.platform === 'win32',
       });
       const handle = supervisor.getHandle(spawned.ptyId);
       if (!handle) {
@@ -186,7 +187,8 @@ export class TerminalSessionManager extends EventEmitter {
         cols: spawnCols,
         rows: spawnRows,
         env: rawEnv as { [key: string]: string },
-      });
+        useConptyDll: process.platform === 'win32' ? true : undefined,
+      } as pty.IWindowsPtyForkOptions);
     }
 
     // Store the session. Pid is already cached on the shim for the ptyHost path

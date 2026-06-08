@@ -233,6 +233,7 @@ export class RunCommandManager extends EventEmitter {
                 rows: spawnRows,
                 env: envStr,
                 name: 'xterm-color',
+                useConptyDll: process.platform === 'win32',
               });
               const handle = supervisor.getHandle(spawned.ptyId);
               if (!handle) {
@@ -246,8 +247,9 @@ export class RunCommandManager extends EventEmitter {
                 cols: spawnCols,
                 rows: spawnRows,
                 cwd: worktreePath,
-                env: env
-              });
+                env: env,
+                useConptyDll: process.platform === 'win32' ? true : undefined,
+              } as pty.IWindowsPtyForkOptions);
             }
 
             const runProcess: RunProcess = {
