@@ -1,6 +1,7 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { ClipboardAddon } from '@xterm/addon-clipboard';
 import type { WebglAddon } from '@xterm/addon-webgl';
 import type { WebLinksAddon } from '@xterm/addon-web-links';
 import type { SerializeAddon } from '@xterm/addon-serialize';
@@ -60,6 +61,44 @@ const WEBGL_APP_BLUR_DETACH_DELAY_MS = 10_000;
 const REFOCUS_DELAYED_REFRESH_MS = 300;
 const TERMINAL_VISIBILITY_REFRESH_MS = 60_000;
 const TERMINAL_VISIBILITY_VIEWER_ID = getTerminalVisibilityViewerId();
+const MAX_TERMINAL_INSTANCE_CACHE_SIZE = 10;
+
+interface CachedTerminalEntry {
+  terminal: Terminal;
+  fitAddon: FitAddon;
+  webLinksAddon: WebLinksAddon | null;
+  serializeAddon: SerializeAddon | null;
+  unicode11Addon: Unicode11Addon | null;
+}
+
+const terminalInstanceCache = new Map<string, CachedTerminalEntry>();
+const terminalControlRefs = new Map<string, {
+  skipNextInterceptRef: React.MutableRefObject<boolean>;
+  tuiActiveRef: React.MutableRefObject<boolean>;
+}>();
+
+function disposeCachedTerminal(entry: CachedTerminalEntry): void {
+  try { entry.webLinksAddon?.dispose(); } catch { /* ignore */ }
+  try { entry.serializeAddon?.dispose(); } catch { /* ignore */ }
+  try { entry.unicode11Addon?.dispose(); } catch { /* ignore */ }
+  try { entry.fitAddon.dispose(); } catch { /* ignore */ }
+  try { entry.terminal.dispose(); } catch { /* ignore */ }
+}
+
+function cacheTerminalInstance(panelId: string, entry: CachedTerminalEntry): void {
+  const existing = terminalInstanceCache.get(panelId);
+  if (existing) disposeCachedTerminal(existing);
+
+  terminalInstanceCache.set(panelId, entry);
+
+  while (terminalInstanceCache.size > MAX_TERMINAL_INSTANCE_CACHE_SIZE) {
+    const oldest = terminalInstanceCache.entries().next().value;
+    if (!oldest) break;
+    const [oldestPanelId, oldestEntry] = oldest;
+    terminalInstanceCache.delete(oldestPanelId);
+    disposeCachedTerminal(oldestEntry);
+  }
+}
 
 function getTerminalVisibilityViewerId(): string {
   const storageKey = 'pane-terminal-visibility-viewer-id';
@@ -558,62 +597,95 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
         // FIX: Check if component was unmounted during async config read
         if (disposed) return;
 
-        // Create XTerm instance
-        console.log('[TerminalPanel] Creating XTerm instance...');
-        terminal = new Terminal({
-          fontSize: terminalFontSize,
-          fontFamily: buildTerminalFontFamily(terminalFontFamily),
-          theme: getTerminalTheme(),
-          scrollback: 2500,
-          cursorBlink: false,
-          cursorStyle: 'block',
-          cursorWidth: 1,
-          cursorInactiveStyle: 'outline',
-          allowTransparency: false,
-          scrollOnUserInput: true,
-          scrollSensitivity: 1,
-          altClickMovesCursor: true,
-          drawBoldTextInBrightColors: true,
-          rescaleOverlappingGlyphs: true,
-          minimumContrastRatio: 1,
-          macOptionIsMeta: false,
-          linkHandler: {
-            activate: (_event, uri) => {
-              void window.electronAPI.openExternal(uri).catch((error: unknown) => {
-                console.error('[TerminalPanel] Failed to open terminal link:', error);
-              });
-            },
-          },
-        });
-        console.log('[TerminalPanel] XTerm instance created:', !!terminal);
+        const cached = terminalInstanceCache.get(panel.id);
+        const restoredFromCache = !!cached;
 
-        fitAddon = new FitAddon();
-        terminal.loadAddon(fitAddon);
-        console.log('[TerminalPanel] FitAddon loaded');
+        if (cached) {
+          terminalInstanceCache.delete(panel.id);
+          console.log('[TerminalPanel] Restoring terminal from cache for panel:', panel.id);
 
-        // Intercept app-level shortcuts before xterm consumes them
-        terminal.attachCustomKeyEventHandler((e: KeyboardEvent) => {
-          const ctrlOrMeta = e.ctrlKey || e.metaKey;
+          terminal = cached.terminal;
+          fitAddon = cached.fitAddon;
+          webLinksAddonRef.current = cached.webLinksAddon;
+          serializeAddonRef.current = cached.serializeAddon;
+          unicode11AddonRef.current = cached.unicode11Addon;
 
-          // Ctrl/Cmd+K: clear xterm scrollback without writing ^K to the PTY.
-          if (ctrlOrMeta && e.key.toLowerCase() === 'k') {
-            if (e.type === 'keydown') {
-              xtermRef.current?.clear();
-              window.electronAPI
-                .invoke('terminal:clearScrollback', panel.id)
-                .catch((error: unknown) => {
-                  console.warn('[TerminalPanel] Failed to persist scrollback clear:', error);
-                });
+          const newFontFamily = buildTerminalFontFamily(terminalFontFamily);
+          if (terminal.options.fontFamily !== newFontFamily || terminal.options.fontSize !== terminalFontSize) {
+            await Promise.all([
+              document.fonts.load(`${terminalFontSize}px "${terminalFontFamily}"`).catch(() => {}),
+              document.fonts.load(`${terminalFontSize}px "Symbols Nerd Font Mono"`).catch(() => {}),
+            ]);
+            if (disposed) {
+              disposeCachedTerminal(cached);
+              return;
             }
-            return false;
+            terminal.options.fontFamily = newFontFamily;
+            terminal.options.fontSize = terminalFontSize;
           }
+          terminal.options.theme = getTerminalTheme();
+        } else {
+          // Create XTerm instance
+          console.log('[TerminalPanel] Creating XTerm instance...');
+          terminal = new Terminal({
+            fontSize: terminalFontSize,
+            fontFamily: buildTerminalFontFamily(terminalFontFamily),
+            theme: getTerminalTheme(),
+            scrollback: 2500,
+            cursorBlink: false,
+            cursorStyle: 'block',
+            cursorWidth: 1,
+            cursorInactiveStyle: 'outline',
+            allowTransparency: false,
+            scrollOnUserInput: true,
+            scrollSensitivity: 1,
+            altClickMovesCursor: true,
+            drawBoldTextInBrightColors: true,
+            rescaleOverlappingGlyphs: true,
+            minimumContrastRatio: 1,
+            macOptionIsMeta: false,
+            linkHandler: {
+              activate: (_event, uri) => {
+                void window.electronAPI.openExternal(uri).catch((error: unknown) => {
+                  console.error('[TerminalPanel] Failed to open terminal link:', error);
+                });
+              },
+            },
+          });
+          console.log('[TerminalPanel] XTerm instance created:', !!terminal);
 
-          // When a TUI app is running, pass most keys through to the PTY
-          // but still let Ctrl/Cmd+V use the browser's native paste path
-          if (tuiActiveRef.current) {
-            if (ctrlOrMeta && e.key.toLowerCase() === 'v') return false;
-            return true;
-          }
+          fitAddon = new FitAddon();
+          terminal.loadAddon(fitAddon);
+          console.log('[TerminalPanel] FitAddon loaded');
+
+          // Load ClipboardAddon for OSC 52 support (terminal apps like opencode
+          // emit OSC 52 to copy selected text to the system clipboard).
+          terminal.loadAddon(new ClipboardAddon());
+
+          // Intercept app-level shortcuts before xterm consumes them
+          terminal.attachCustomKeyEventHandler((e: KeyboardEvent) => {
+            const ctrlOrMeta = e.ctrlKey || e.metaKey;
+            const controlRefs = terminalControlRefs.get(panel.id);
+
+            // Ctrl/Cmd+K: clear xterm scrollback without writing ^K to the PTY.
+            if (ctrlOrMeta && e.key.toLowerCase() === 'k') {
+              if (e.type === 'keydown') {
+                terminal?.clear();
+                window.electronAPI
+                  .invoke('terminal:clearScrollback', panel.id)
+                  .catch((error: unknown) => {
+                    console.warn('[TerminalPanel] Failed to persist scrollback clear:', error);
+                  });
+              }
+              return false;
+            }
+
+            // When a TUI app is running, pass most keys through to the PTY
+            // but still let Ctrl/Cmd+V use the browser's native paste path
+            if (controlRefs?.tuiActiveRef.current) {
+              if (ctrlOrMeta && e.key.toLowerCase() === 'v') return false;
+              return true;
+            }
 
           // Shift+Enter: emit the same sequence as Alt+Enter (\x1b\r = ESC+CR)
           // xterm.js ignores shiftKey on Enter, so Shift+Enter = Enter by default.
@@ -686,7 +758,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
           // interceptor skips activation for this keystroke. AltGr sets both ctrlKey+altKey
           // on Windows/Linux, or e.getModifierState('AltGraph') on some platforms.
           if (e.key === '@' && (e.getModifierState('AltGraph') || (e.ctrlKey && e.altKey))) {
-            skipNextInterceptRef.current = true;
+            if (controlRefs) controlRefs.skipNextInterceptRef.current = true;
           }
 
           // Right Alt: let OS/browser handle (e.g. voice transcription, IME)
@@ -701,8 +773,11 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
           // which is handled by our paste event listener on the terminal container
           if (ctrlOrMeta && e.key.toLowerCase() === 'v') return false;
 
-          return true; // Let terminal handle everything else
-        });
+            return true; // Let terminal handle everything else
+          });
+        }
+
+        terminalControlRefs.set(panel.id, { skipNextInterceptRef, tuiActiveRef });
 
         // FIX: Additional check before DOM manipulation
         if (terminalRef.current && !disposed) {
@@ -719,53 +794,55 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
           console.log('[TerminalPanel] FitAddon fitted');
           terminal.options.theme = getTerminalTheme();
 
-          // Load WebLinksAddon for clickable URLs
-          try {
-            const { WebLinksAddon: WebLinksAddonImpl } = await import('@xterm/addon-web-links');
-            if (!disposed) {
-              const useMetaKey = isMac();
-              const webLinksAddon = new WebLinksAddonImpl((event, uri) => {
-                // Only open link if Ctrl (Windows/Linux) or Cmd (Mac) is held
-                if (useMetaKey ? event.metaKey : event.ctrlKey) {
-                  window.electronAPI.openExternal(uri);
-                }
-              });
-              terminal.loadAddon(webLinksAddon);
-              webLinksAddonRef.current = webLinksAddon;
-              console.log('[TerminalPanel] WebLinksAddon loaded for panel', panel.id);
+          if (!restoredFromCache) {
+            // Load WebLinksAddon for clickable URLs
+            try {
+              const { WebLinksAddon: WebLinksAddonImpl } = await import('@xterm/addon-web-links');
+              if (!disposed) {
+                const useMetaKey = isMac();
+                const webLinksAddon = new WebLinksAddonImpl((event, uri) => {
+                  // Only open link if Ctrl (Windows/Linux) or Cmd (Mac) is held
+                  if (useMetaKey ? event.metaKey : event.ctrlKey) {
+                    window.electronAPI.openExternal(uri);
+                  }
+                });
+                terminal.loadAddon(webLinksAddon);
+                webLinksAddonRef.current = webLinksAddon;
+                console.log('[TerminalPanel] WebLinksAddon loaded for panel', panel.id);
+              }
+            } catch (e) {
+              console.warn('[TerminalPanel] WebLinksAddon failed to load for panel', panel.id, ':', e);
+              webLinksAddonRef.current = null;
             }
-          } catch (e) {
-            console.warn('[TerminalPanel] WebLinksAddon failed to load for panel', panel.id, ':', e);
-            webLinksAddonRef.current = null;
-          }
 
-          // Load SerializeAddon for terminal snapshot persistence
-          try {
-            const { SerializeAddon: SerializeAddonImpl } = await import('@xterm/addon-serialize');
-            if (!disposed) {
-              const serializeAddon = new SerializeAddonImpl();
-              terminal.loadAddon(serializeAddon);
-              serializeAddonRef.current = serializeAddon;
-              console.log('[TerminalPanel] SerializeAddon loaded for panel', panel.id);
+            // Load SerializeAddon for terminal snapshot persistence
+            try {
+              const { SerializeAddon: SerializeAddonImpl } = await import('@xterm/addon-serialize');
+              if (!disposed) {
+                const serializeAddon = new SerializeAddonImpl();
+                terminal.loadAddon(serializeAddon);
+                serializeAddonRef.current = serializeAddon;
+                console.log('[TerminalPanel] SerializeAddon loaded for panel', panel.id);
+              }
+            } catch (e) {
+              console.warn('[TerminalPanel] SerializeAddon failed to load for panel', panel.id, ':', e);
+              serializeAddonRef.current = null;
             }
-          } catch (e) {
-            console.warn('[TerminalPanel] SerializeAddon failed to load for panel', panel.id, ':', e);
-            serializeAddonRef.current = null;
-          }
 
-          // Load Unicode11Addon for better emoji/unicode width calculation
-          try {
-            const { Unicode11Addon: Unicode11AddonImpl } = await import('@xterm/addon-unicode11');
-            if (!disposed) {
-              const unicode11Addon = new Unicode11AddonImpl();
-              terminal.loadAddon(unicode11Addon);
-              terminal.unicode.activeVersion = '11';
-              unicode11AddonRef.current = unicode11Addon;
-              console.log('[TerminalPanel] Unicode11Addon loaded for panel', panel.id);
+            // Load Unicode11Addon for better emoji/unicode width calculation
+            try {
+              const { Unicode11Addon: Unicode11AddonImpl } = await import('@xterm/addon-unicode11');
+              if (!disposed) {
+                const unicode11Addon = new Unicode11AddonImpl();
+                terminal.loadAddon(unicode11Addon);
+                terminal.unicode.activeVersion = '11';
+                unicode11AddonRef.current = unicode11Addon;
+                console.log('[TerminalPanel] Unicode11Addon loaded for panel', panel.id);
+              }
+            } catch (e) {
+              console.warn('[TerminalPanel] Unicode11Addon failed to load for panel', panel.id, ':', e);
+              unicode11AddonRef.current = null;
             }
-          } catch (e) {
-            console.warn('[TerminalPanel] Unicode11Addon failed to load for panel', panel.id, ':', e);
-            unicode11AddonRef.current = null;
           }
 
           xtermRef.current = terminal;
@@ -845,7 +922,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
           // prompt over apps like opencode until a manual resize makes the app redraw.
           // Instead, restore the latest alternate-screen frame and send the same PTY
           // resize signal that already fixes TUI redraws from the toolbar/manual resize.
-          if (terminalStateForThisPanel) {
+          if (!restoredFromCache && terminalStateForThisPanel) {
             if (terminalStateForThisPanel.isAlternateScreen) {
               const alternateContent = normalizeTerminalBuffer(terminalStateForThisPanel.alternateScreenBuffer);
               if (alternateContent) {
@@ -1066,10 +1143,12 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
           terminalRef.current.addEventListener('dragover', handleDragOver);
           terminalRef.current.addEventListener('drop', handleDrop);
 
-          // Let the WebGL renderer finish painting before removing the loader overlay.
-          // Without this, the loader disappears and the user briefly sees stale/blank
-          // content before the fit() render completes (visible as a stutter on macOS).
-          await new Promise(resolve => setTimeout(resolve, 30));
+          // Let the WebGL renderer finish painting before removing the loader overlay
+          // on cold starts. Cached terminals already have rendered content, so skip
+          // the delay to make session switches feel instant.
+          if (!restoredFromCache) {
+            await new Promise(resolve => setTimeout(resolve, 30));
+          }
           if (disposed) return;
           setIsInitialized(true);
           console.log('[TerminalPanel] Terminal initialization complete, isInitialized set to true');
@@ -1368,6 +1447,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
       // below is deferred via cleanupPromise.then(...) and may never run if
       // unmount happens before init resolves.
       window.electronAPI.invoke('terminal:setVisibility', panel.id, false, TERMINAL_VISIBILITY_VIEWER_ID);
+      terminalControlRefs.delete(panel.id);
 
       // Clean up async initialization
       cleanupPromise.then(cleanupFn => cleanupFn?.());
@@ -1376,12 +1456,6 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
       if (webglAddonRef.current) {
         try { webglAddonRef.current.dispose(); } catch { /* ignore */ }
         webglAddonRef.current = null;
-      }
-
-      // Dispose WebLinks addon
-      if (webLinksAddonRef.current) {
-        try { webLinksAddonRef.current.dispose(); } catch { /* ignore */ }
-        webLinksAddonRef.current = null;
       }
 
       // Save serialized terminal snapshot before disposing
@@ -1394,38 +1468,26 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
         }
       }
 
-      // Dispose SerializeAddon
-      if (serializeAddonRef.current) {
-        try { serializeAddonRef.current.dispose(); } catch { /* ignore */ }
-        serializeAddonRef.current = null;
+      // Cache XTerm and reusable addons across panel remounts. The inner cleanup
+      // above removes component-scoped event handlers; the Terminal instance and
+      // loaded addons stay alive for a fast restore on session switch.
+      if (xtermRef.current && fitAddonRef.current) {
+        cacheTerminalInstance(panel.id, {
+          terminal: xtermRef.current,
+          fitAddon: fitAddonRef.current,
+          webLinksAddon: webLinksAddonRef.current,
+          serializeAddon: serializeAddonRef.current,
+          unicode11Addon: unicode11AddonRef.current,
+        });
+        console.log('[TerminalPanel] Cached terminal for panel:', panel.id, 'cache size:', terminalInstanceCache.size);
       }
 
-      // Dispose Unicode11Addon
-      if (unicode11AddonRef.current) {
-        try { unicode11AddonRef.current.dispose(); } catch { /* ignore */ }
-        unicode11AddonRef.current = null;
-      }
-
-      // Dispose XTerm instance only on final unmount
-      if (xtermRef.current) {
-        try {
-          console.log('[TerminalPanel] Disposing terminal for panel:', panel.id);
-          xtermRef.current.dispose();
-        } catch (e) {
-          console.warn('Error disposing terminal:', e);
-        }
-        xtermRef.current = null;
-      }
-      
-      if (fitAddonRef.current) {
-        try {
-          fitAddonRef.current.dispose();
-        } catch (e) {
-          console.warn('Error disposing fit addon:', e);
-        }
-        fitAddonRef.current = null;
-      }
-      
+      xtermRef.current = null;
+      fitAddonRef.current = null;
+      webLinksAddonRef.current = null;
+      serializeAddonRef.current = null;
+      unicode11AddonRef.current = null;
+       
       setIsInitialized(false);
     };
   }, [panel.id]); // Only depend on panel.id to prevent re-initialization on session switch
