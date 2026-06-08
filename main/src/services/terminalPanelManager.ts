@@ -125,6 +125,7 @@ interface TerminalProcess {
   commandHistory: string[];
   currentCommand: string;
   lastActivity: Date;
+  lastInputAt: number;
   isWSL?: boolean;
   /**
    * WSL context captured at spawn time. Stored so `respawnAll` can re-inject
@@ -784,6 +785,7 @@ export class TerminalPanelManager {
       commandHistory: [],
       currentCommand: '',
       lastActivity: new Date(),
+      lastInputAt: 0,
       isWSL: !!(wslContext && process.platform === 'win32'),
       // Capture wslContext so `respawnAll` can re-inject the same WSLENV /
       // distro / user settings after a ptyHost supervisor restart without
@@ -1054,23 +1056,32 @@ export class TerminalPanelManager {
       }
 
       // Buffer output for batching instead of sending immediately
+      const hadPendingOutput = terminal.outputBuffer.length > 0;
       terminal.outputBuffer += filtered;
 
-      // Hidden panels cap per-flush size below HIGH_WATERMARK so a single
-      // flush on a verbose background build can't alone trip backpressure.
-      const sizeThreshold = terminal.isVisible ? OUTPUT_BATCH_SIZE : OUTPUT_BATCH_SIZE_HIDDEN;
-      if (terminal.outputBuffer.length >= sizeThreshold) {
-        // Buffer is large enough — flush immediately
+      if (!terminal.isVisible) {
+        if (terminal.outputBuffer.length >= OUTPUT_BATCH_SIZE_HIDDEN) {
+          this.flushOutputBuffer(terminal);
+        } else if (!terminal.outputFlushTimer) {
+          terminal.outputFlushTimer = setTimeout(() => {
+            this.flushOutputBuffer(terminal);
+          }, OUTPUT_BATCH_INTERVAL_HIDDEN);
+        }
+        return;
+      }
+
+      const INPUT_ECHO_WINDOW_MS = 100;
+      const INPUT_ECHO_THRESHOLD = 64;
+      const recentlyTyped = Date.now() - terminal.lastInputAt <= INPUT_ECHO_WINDOW_MS;
+
+      if (!hadPendingOutput && recentlyTyped && filtered.length <= INPUT_ECHO_THRESHOLD) {
+        this.flushOutputBuffer(terminal);
+      } else if (terminal.outputBuffer.length >= OUTPUT_BATCH_SIZE) {
         this.flushOutputBuffer(terminal);
       } else if (!terminal.outputFlushTimer) {
-        // Schedule flush for next frame. Hidden panels use a slower cadence
-        // to cut main-process IPC wake-ups; foreground panels keep 32 ms.
-        const interval = terminal.isVisible
-          ? OUTPUT_BATCH_INTERVAL
-          : OUTPUT_BATCH_INTERVAL_HIDDEN;
         terminal.outputFlushTimer = setTimeout(() => {
           this.flushOutputBuffer(terminal);
-        }, interval);
+        }, OUTPUT_BATCH_INTERVAL);
       }
     });
     
@@ -1150,6 +1161,7 @@ export class TerminalPanelManager {
 
     try {
       terminal.pty.write(data);
+      terminal.lastInputAt = Date.now();
     } catch (err) {
       // PTY may have exited between the map lookup and the write call
       console.warn(`[TerminalPanelManager] Failed to write to terminal ${panelId}:`, err);

@@ -311,8 +311,8 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
     return () => clearInterval(refreshTimer);
   }, [effectiveVisible, panel.id, isInitialized]);
 
-  // WebGL policy: detach immediately when the panel hides, keep it attached
-  // through short app blurs, and detach only after a sustained app blur.
+  // WebGL policy: keep hidden panels attached through tab switches, keep it
+  // attached through short app blurs, and detach only after a sustained app blur.
   useEffect(() => {
     if (blurDetachTimerRef.current) {
       clearTimeout(blurDetachTimerRef.current);
@@ -320,8 +320,9 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
     }
 
     if (!panelVisible) {
-      setWebglAllowed(false);
-      disposeWebglRenderer('panel-hidden');
+      // Panel hidden (tab switch) — keep WebGL attached, xterm's render service
+      // pauses rendering via IntersectionObserver when not visible
+      setWebglAllowed(true);
       return;
     }
 
@@ -347,8 +348,8 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
 
   useEffect(() => {
     if (!isInitialized || !xtermRef.current) return;
-    if (!webglAllowed || !panelVisible) {
-      disposeWebglRenderer(panelVisible ? 'webgl-not-allowed' : 'panel-hidden');
+    if (!webglAllowed) {
+      disposeWebglRenderer('webgl-not-allowed');
       return;
     }
 
@@ -357,7 +358,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
     return () => {
       disposed = true;
     };
-  }, [webglAllowed, panelVisible, windowFocused, isInitialized, disposeWebglRenderer, loadWebglRenderer]);
+  }, [webglAllowed, isInitialized, disposeWebglRenderer, loadWebglRenderer, windowFocused]);
 
   // Terminal link handling hook
   const {
@@ -620,7 +621,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
           // Block both keydown and keyup to fully suppress xterm's default \r.
           if (e.shiftKey && e.key === 'Enter') {
             if (e.type === 'keydown') {
-              window.electronAPI.invoke('terminal:input', panel.id, '\x1b\r');
+              window.electronAPI.sendTerminalInput(panel.id, '\x1b\r');
             }
             return false;
           }
@@ -1180,7 +1181,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
           // Create interceptor for @ mentions and future trigger handlers
           const interceptor = new TerminalInterceptor({
             onStateChange: (state) => setInterceptorState(state.active ? state : null),
-            onFlush: (data) => window.electronAPI.invoke('terminal:input', panel.id, data),
+            onFlush: (data) => window.electronAPI.sendTerminalInput(panel.id, data),
           });
           interceptorRef.current = interceptor;
 
@@ -1275,12 +1276,12 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
             // Skip interception for AltGr-produced @ (e.g. German keyboard)
             if (skipNextInterceptRef.current) {
               skipNextInterceptRef.current = false;
-              window.electronAPI.invoke('terminal:input', panel.id, data);
+              window.electronAPI.sendTerminalInput(panel.id, data);
               return;
             }
             const result = interceptor.handleInput(data);
             if (!result.consumed) {
-              window.electronAPI.invoke('terminal:input', panel.id, data);
+              window.electronAPI.sendTerminalInput(panel.id, data);
             }
           });
 
@@ -1293,7 +1294,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
           // Tabby, and xterm's own AttachAddon for the same pattern.
           const binaryDisposable = terminal.onBinary((data) => {
             console.log('[TerminalPanel] onBinary length:', data.length, 'panel:', panel.id);
-            window.electronAPI.invoke('terminal:input', panel.id, data);
+            window.electronAPI.sendTerminalInput(panel.id, data);
           });
 
           // Handle resize

@@ -60,6 +60,7 @@ interface ElectronAPI {
   // daemon bridge while adapter-only channels stay on direct Electron IPC.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Generic IPC bridge that returns different types based on channel
   invoke: (channel: string, ...args: unknown[]) => Promise<any>;
+  sendTerminalInput: (panelId: string, data: string) => void;
   
   // Basic app info
   getAppVersion: () => Promise<string>;

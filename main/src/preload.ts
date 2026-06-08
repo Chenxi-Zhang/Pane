@@ -409,9 +409,14 @@ function invokeIpc(channel: string, ...args: unknown[]) {
   return ipcRenderer.invoke(channel, ...args);
 }
 
+function sendTerminalInput(panelId: string, data: string): void {
+  ipcRenderer.send('terminal:input', panelId, data);
+}
+
 contextBridge.exposeInMainWorld('electronAPI', {
   // Generic invoke method for direct IPC calls
   invoke: (channel: string, ...args: unknown[]) => invokeIpc(channel, ...args),
+  sendTerminalInput: (panelId: string, data: string) => sendTerminalInput(panelId, data),
   
   // Basic app info
   getAppVersion: () => invokeIpc('get-app-version'),

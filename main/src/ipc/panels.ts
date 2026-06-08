@@ -546,6 +546,11 @@ export function registerPanelHandlers(
   commandRegistry.register('terminal:input', async (panelId: string, data: string) => {
     return terminalPanelManager.writeToTerminal(panelId, data);
   });
+
+  // Fire-and-forget listener for low-latency input from renderer's ipcRenderer.send()
+  ipcMain.on('terminal:input', (_event, panelId: string, data: string) => {
+    terminalPanelManager.writeToTerminal(panelId, data);
+  });
   
   commandRegistry.register('terminal:resize', async (panelId: string, cols: number, rows: number) => {
     return terminalPanelManager.resizeTerminal(panelId, cols, rows);
