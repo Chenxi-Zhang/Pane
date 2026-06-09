@@ -803,13 +803,31 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
           terminal.options.theme = getTerminalTheme();
 
           if (!restoredFromCache) {
-            // Load WebLinksAddon for clickable URLs
-            try {
-              const { WebLinksAddon: WebLinksAddonImpl } = await import('@xterm/addon-web-links');
-              if (!disposed) {
+            // Load all three addons in parallel — they are independent and each
+            // triggers a separate chunk fetch on first open. Loading them
+            // concurrently cuts the total wait from 3× round-trip to 1×.
+            const [webLinksModule, serializeModule, unicodeModule] = await Promise.all([
+              import('@xterm/addon-web-links').catch((e) => {
+                console.warn('[TerminalPanel] WebLinksAddon chunk failed:', e);
+                return null;
+              }),
+              import('@xterm/addon-serialize').catch((e) => {
+                console.warn('[TerminalPanel] SerializeAddon chunk failed:', e);
+                return null;
+              }),
+              import('@xterm/addon-unicode11').catch((e) => {
+                console.warn('[TerminalPanel] Unicode11Addon chunk failed:', e);
+                return null;
+              }),
+            ]);
+
+            if (disposed) return;
+
+            // WebLinksAddon — clickable URLs
+            if (!disposed && webLinksModule) {
+              try {
                 const useMetaKey = isMac();
-                const webLinksAddon = new WebLinksAddonImpl((event, uri) => {
-                  // Only open link if Ctrl (Windows/Linux) or Cmd (Mac) is held
+                const webLinksAddon = new webLinksModule.WebLinksAddon((event, uri) => {
                   if (useMetaKey ? event.metaKey : event.ctrlKey) {
                     window.electronAPI.openExternal(uri);
                   }
@@ -817,39 +835,37 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
                 terminal.loadAddon(webLinksAddon);
                 webLinksAddonRef.current = webLinksAddon;
                 console.log('[TerminalPanel] WebLinksAddon loaded for panel', panel.id);
+              } catch (e) {
+                console.warn('[TerminalPanel] WebLinksAddon failed to instantiate for panel', panel.id, ':', e);
+                webLinksAddonRef.current = null;
               }
-            } catch (e) {
-              console.warn('[TerminalPanel] WebLinksAddon failed to load for panel', panel.id, ':', e);
-              webLinksAddonRef.current = null;
             }
 
-            // Load SerializeAddon for terminal snapshot persistence
-            try {
-              const { SerializeAddon: SerializeAddonImpl } = await import('@xterm/addon-serialize');
-              if (!disposed) {
-                const serializeAddon = new SerializeAddonImpl();
+            // SerializeAddon — terminal snapshot persistence
+            if (!disposed && serializeModule) {
+              try {
+                const serializeAddon = new serializeModule.SerializeAddon();
                 terminal.loadAddon(serializeAddon);
                 serializeAddonRef.current = serializeAddon;
                 console.log('[TerminalPanel] SerializeAddon loaded for panel', panel.id);
+              } catch (e) {
+                console.warn('[TerminalPanel] SerializeAddon failed to instantiate for panel', panel.id, ':', e);
+                serializeAddonRef.current = null;
               }
-            } catch (e) {
-              console.warn('[TerminalPanel] SerializeAddon failed to load for panel', panel.id, ':', e);
-              serializeAddonRef.current = null;
             }
 
-            // Load Unicode11Addon for better emoji/unicode width calculation
-            try {
-              const { Unicode11Addon: Unicode11AddonImpl } = await import('@xterm/addon-unicode11');
-              if (!disposed) {
-                const unicode11Addon = new Unicode11AddonImpl();
+            // Unicode11Addon — better emoji/unicode width calculation
+            if (!disposed && unicodeModule) {
+              try {
+                const unicode11Addon = new unicodeModule.Unicode11Addon();
                 terminal.loadAddon(unicode11Addon);
                 terminal.unicode.activeVersion = '11';
                 unicode11AddonRef.current = unicode11Addon;
                 console.log('[TerminalPanel] Unicode11Addon loaded for panel', panel.id);
+              } catch (e) {
+                console.warn('[TerminalPanel] Unicode11Addon failed to instantiate for panel', panel.id, ':', e);
+                unicode11AddonRef.current = null;
               }
-            } catch (e) {
-              console.warn('[TerminalPanel] Unicode11Addon failed to load for panel', panel.id, ':', e);
-              unicode11AddonRef.current = null;
             }
           }
 

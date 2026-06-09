@@ -61,6 +61,24 @@ window.addEventListener('error', (event) => {
   // Note: We don't prevent default here as the error boundary should catch React errors
 });
 
+// Preload xterm terminal chunks eagerly so the first terminal open is fast.
+// TerminalPanel is React.lazy() in PanelContainer, so the first mount triggers
+// a network fetch for the chunk containing @xterm/xterm core + FitAddon +
+// ClipboardAddon (~200 KB+). The three addon dynamic imports (WebLinks,
+// Serialize, Unicode11) are also lazy. Firing all of these as soon as the app
+// starts populates the module cache — by the time the user opens a terminal
+// the chunks are already parsed and ready.
+void Promise.all([
+  import('./components/panels/TerminalPanel').catch(() => {}),
+  import('@xterm/addon-web-links').catch(() => {}),
+  import('@xterm/addon-serialize').catch(() => {}),
+  import('@xterm/addon-unicode11').catch(() => {}),
+  import('@xterm/addon-webgl').catch(() => {}),
+  // Preload terminal fonts so xterm measures correct cell dimensions immediately
+  document.fonts.load('14px "Geist Mono"').catch(() => {}),
+  document.fonts.load('14px "Symbols Nerd Font Mono"').catch(() => {}),
+]);
+
 // Swallow OS file drops outside of registered drop zones (terminal, editor, etc.)
 // Without this, Chromium's default behavior on a file drop is to navigate the
 // window to the dropped file's URI — which wipes the entire Pane UI. Components
