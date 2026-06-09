@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
 import { GitStatusManager } from '../gitStatusManager';
-import { execSync } from '../../utils/commandExecutor';
 import { existsSync } from 'fs';
 import { fastCheckWorkingDirectory, fastGetAheadBehind, fastGetDiffStats } from '../gitPlumbingCommands';
 import type { SessionManager } from '../sessionManager';
@@ -17,7 +16,6 @@ interface GitStatusManagerPrivates {
 }
 
 // Mock modules
-vi.mock('../../utils/commandExecutor');
 vi.mock('fs');
 vi.mock('../gitPlumbingCommands');
 vi.mock('../gitStatusLogger', () => ({
@@ -56,7 +54,9 @@ const mockProject = {
 const mockProjectContext = {
   project: mockProject,
   pathResolver: {},
-  commandRunner: { execAsync: vi.fn() },
+  commandRunner: {
+    execAsync: vi.fn().mockResolvedValue({ stdout: '', stderr: '' }),
+  },
 };
 
 const cleanIndexStatus: GitIndexStatus = {
@@ -109,18 +109,18 @@ describe('GitStatusManager', () => {
     (existsSync as Mock).mockReturnValue(false);
 
     // Default: no uncommitted changes, no ahead/behind
-    (fastCheckWorkingDirectory as Mock).mockReturnValue(cleanIndexStatus);
-    (fastGetAheadBehind as Mock).mockReturnValue({ ahead: 0, behind: 0 });
-    (fastGetDiffStats as Mock).mockReturnValue({ additions: 0, deletions: 0, filesChanged: 0 });
+    (fastCheckWorkingDirectory as Mock).mockResolvedValue(cleanIndexStatus);
+    (fastGetAheadBehind as Mock).mockResolvedValue({ ahead: 0, behind: 0 });
+    (fastGetDiffStats as Mock).mockResolvedValue({ additions: 0, deletions: 0, filesChanged: 0 });
 
-    // Default execSync returns empty buffer
-    (execSync as Mock).mockReturnValue(Buffer.from(''));
+    // Default commandRunner.execAsync returns empty stdout
+    (mockProjectContext.commandRunner.execAsync as Mock).mockResolvedValue({ stdout: '', stderr: '' });
   });
 
   describe('fetchGitStatus via getGitStatus (cache miss scenarios)', () => {
     it('returns clean state when no changes, no ahead/behind, no untracked', async () => {
-      (fastCheckWorkingDirectory as Mock).mockReturnValue(cleanIndexStatus);
-      (fastGetAheadBehind as Mock).mockReturnValue({ ahead: 0, behind: 0 });
+      (fastCheckWorkingDirectory as Mock).mockResolvedValue(cleanIndexStatus);
+      (fastGetAheadBehind as Mock).mockResolvedValue({ ahead: 0, behind: 0 });
 
       const status = await (gitStatusManager as unknown as GitStatusManagerPrivates).fetchGitStatus('test-session');
 
@@ -139,8 +139,8 @@ describe('GitStatusManager', () => {
         hasUntracked: false,
         hasConflicts: false,
       });
-      (fastGetDiffStats as Mock).mockReturnValue({ additions: 15, deletions: 5, filesChanged: 3 });
-      (fastGetAheadBehind as Mock).mockReturnValue({ ahead: 0, behind: 0 });
+      (fastGetDiffStats as Mock).mockResolvedValue({ additions: 15, deletions: 5, filesChanged: 3 });
+      (fastGetAheadBehind as Mock).mockResolvedValue({ ahead: 0, behind: 0 });
 
       const status = await (gitStatusManager as unknown as GitStatusManagerPrivates).fetchGitStatus('test-session');
 
@@ -152,16 +152,16 @@ describe('GitStatusManager', () => {
     });
 
     it('returns ahead state when commits ahead of main', async () => {
-      (fastCheckWorkingDirectory as Mock).mockReturnValue(cleanIndexStatus);
-      (fastGetAheadBehind as Mock).mockReturnValue({ ahead: 3, behind: 0 });
-      (execSync as Mock).mockImplementation((cmd: string) => {
+      (fastCheckWorkingDirectory as Mock).mockResolvedValue(cleanIndexStatus);
+      (fastGetAheadBehind as Mock).mockResolvedValue({ ahead: 3, behind: 0 });
+      (mockProjectContext.commandRunner.execAsync as Mock).mockImplementation((cmd: string) => {
         if ((cmd as string).includes('diff --shortstat')) {
-          return Buffer.from(' 5 files changed, 20 insertions(+), 10 deletions(-)');
+          return Promise.resolve({ stdout: ' 5 files changed, 20 insertions(+), 10 deletions(-)', stderr: '' });
         }
         if ((cmd as string).includes('rev-list --count')) {
-          return Buffer.from('3');
+          return Promise.resolve({ stdout: '3', stderr: '' });
         }
-        return Buffer.from('');
+        return Promise.resolve({ stdout: '', stderr: '' });
       });
 
       const status = await (gitStatusManager as unknown as GitStatusManagerPrivates).fetchGitStatus('test-session');
@@ -176,8 +176,8 @@ describe('GitStatusManager', () => {
     });
 
     it('returns behind state when commits behind main', async () => {
-      (fastCheckWorkingDirectory as Mock).mockReturnValue(cleanIndexStatus);
-      (fastGetAheadBehind as Mock).mockReturnValue({ ahead: 0, behind: 5 });
+      (fastCheckWorkingDirectory as Mock).mockResolvedValue(cleanIndexStatus);
+      (fastGetAheadBehind as Mock).mockResolvedValue({ ahead: 0, behind: 5 });
 
       const status = await (gitStatusManager as unknown as GitStatusManagerPrivates).fetchGitStatus('test-session');
 
@@ -187,16 +187,16 @@ describe('GitStatusManager', () => {
     });
 
     it('returns diverged state when both ahead and behind', async () => {
-      (fastCheckWorkingDirectory as Mock).mockReturnValue(cleanIndexStatus);
-      (fastGetAheadBehind as Mock).mockReturnValue({ ahead: 2, behind: 3 });
-      (execSync as Mock).mockImplementation((cmd: string) => {
+      (fastCheckWorkingDirectory as Mock).mockResolvedValue(cleanIndexStatus);
+      (fastGetAheadBehind as Mock).mockResolvedValue({ ahead: 2, behind: 3 });
+      (mockProjectContext.commandRunner.execAsync as Mock).mockImplementation((cmd: string) => {
         if ((cmd as string).includes('diff --shortstat')) {
-          return Buffer.from(' 4 files changed, 15 insertions(+), 8 deletions(-)');
+          return Promise.resolve({ stdout: ' 4 files changed, 15 insertions(+), 8 deletions(-)', stderr: '' });
         }
         if ((cmd as string).includes('rev-list --count')) {
-          return Buffer.from('2');
+          return Promise.resolve({ stdout: '2', stderr: '' });
         }
-        return Buffer.from('');
+        return Promise.resolve({ stdout: '', stderr: '' });
       });
 
       const status = await (gitStatusManager as unknown as GitStatusManagerPrivates).fetchGitStatus('test-session');
@@ -207,13 +207,13 @@ describe('GitStatusManager', () => {
     });
 
     it('returns conflict state when merge conflicts exist', async () => {
-      (fastCheckWorkingDirectory as Mock).mockReturnValue({
+      (fastCheckWorkingDirectory as Mock).mockResolvedValue({
         hasModified: false,
         hasStaged: false,
         hasUntracked: false,
         hasConflicts: true,
       });
-      (fastGetAheadBehind as Mock).mockReturnValue({ ahead: 0, behind: 0 });
+      (fastGetAheadBehind as Mock).mockResolvedValue({ ahead: 0, behind: 0 });
 
       const status = await (gitStatusManager as unknown as GitStatusManagerPrivates).fetchGitStatus('test-session');
 
@@ -221,13 +221,13 @@ describe('GitStatusManager', () => {
     });
 
     it('returns untracked state when only untracked files exist', async () => {
-      (fastCheckWorkingDirectory as Mock).mockReturnValue({
+      (fastCheckWorkingDirectory as Mock).mockResolvedValue({
         hasModified: false,
         hasStaged: false,
         hasUntracked: true,
         hasConflicts: false,
       });
-      (fastGetAheadBehind as Mock).mockReturnValue({ ahead: 0, behind: 0 });
+      (fastGetAheadBehind as Mock).mockResolvedValue({ ahead: 0, behind: 0 });
 
       const status = await (gitStatusManager as unknown as GitStatusManagerPrivates).fetchGitStatus('test-session');
 
@@ -244,22 +244,22 @@ describe('GitStatusManager', () => {
     });
 
     it('sets modified as primary state and ahead as secondary when uncommitted changes and ahead', async () => {
-      (fastCheckWorkingDirectory as Mock).mockReturnValue({
+      (fastCheckWorkingDirectory as Mock).mockResolvedValue({
         hasModified: true,
         hasStaged: false,
         hasUntracked: false,
         hasConflicts: false,
       });
-      (fastGetDiffStats as Mock).mockReturnValue({ additions: 5, deletions: 2, filesChanged: 2 });
-      (fastGetAheadBehind as Mock).mockReturnValue({ ahead: 2, behind: 0 });
-      (execSync as Mock).mockImplementation((cmd: string) => {
+      (fastGetDiffStats as Mock).mockResolvedValue({ additions: 5, deletions: 2, filesChanged: 2 });
+      (fastGetAheadBehind as Mock).mockResolvedValue({ ahead: 2, behind: 0 });
+      (mockProjectContext.commandRunner.execAsync as Mock).mockImplementation((cmd: string) => {
         if ((cmd as string).includes('diff --shortstat')) {
-          return Buffer.from(' 3 files changed, 10 insertions(+), 5 deletions(-)');
+          return Promise.resolve({ stdout: ' 3 files changed, 10 insertions(+), 5 deletions(-)', stderr: '' });
         }
         if ((cmd as string).includes('rev-list --count')) {
-          return Buffer.from('2');
+          return Promise.resolve({ stdout: '2', stderr: '' });
         }
-        return Buffer.from('');
+        return Promise.resolve({ stdout: '', stderr: '' });
       });
 
       const status = await (gitStatusManager as unknown as GitStatusManagerPrivates).fetchGitStatus('test-session');

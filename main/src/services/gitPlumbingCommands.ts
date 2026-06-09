@@ -1,9 +1,9 @@
-import { execSync, ExtendedExecSyncOptions } from '../utils/commandExecutor';
 import * as fs from 'fs';
+import type { CommandRunner } from '../utils/commandRunner';
 
 /**
- * Optimized git commands using plumbing (low-level) commands
- * These are generally faster than porcelain commands like `git status`
+ * Optimized git commands using plumbing (low-level) commands.
+ * All functions are async to avoid blocking the Electron main process.
  */
 
 export interface GitIndexStatus {
@@ -17,7 +17,7 @@ export interface GitIndexStatus {
  * Fast check if working directory has any changes using git plumbing commands
  * Much faster than running full `git status --porcelain`
  */
-export function fastCheckWorkingDirectory(cwd: string): GitIndexStatus {
+export async function fastCheckWorkingDirectory(cwd: string, commandRunner: CommandRunner): Promise<GitIndexStatus> {
   const result: GitIndexStatus = {
     hasModified: false,
     hasStaged: false,
@@ -43,40 +43,37 @@ export function fastCheckWorkingDirectory(cwd: string): GitIndexStatus {
   try {
     // 1. Refresh the index first (very fast, updates git's cache)
     try {
-      execSync('git update-index --refresh --ignore-submodules', { cwd, encoding: 'utf8', silent: true });
+      await commandRunner.execAsync('git update-index --refresh --ignore-submodules', cwd, { silent: true });
     } catch {
       // Some files may have been modified, that's ok
     }
 
     // 2. Check for unstaged changes (modified files in working directory)
     try {
-      execSync('git diff-files --quiet --ignore-submodules', { cwd, encoding: 'utf8', silent: true });
+      await commandRunner.execAsync('git diff-files --quiet --ignore-submodules', cwd, { silent: true });
     } catch {
       result.hasModified = true;
     }
 
     // 3. Check for staged changes (in index)
     try {
-      execSync('git diff-index --cached --quiet HEAD --ignore-submodules', { cwd, encoding: 'utf8', silent: true });
+      await commandRunner.execAsync('git diff-index --cached --quiet HEAD --ignore-submodules', cwd, { silent: true });
     } catch {
       result.hasStaged = true;
     }
 
     // 4. Check for untracked files (more efficient than ls-files for just checking existence)
-    const untrackedCheck = execSync(
-      'git ls-files --others --exclude-standard --directory --no-empty-directory', 
-      { cwd }
-    ).toString().trim();
-    
-    if (untrackedCheck) {
+    const untrackedResult = await commandRunner.execAsync(
+      'git ls-files --others --exclude-standard --directory --no-empty-directory',
+      cwd
+    );
+    if (untrackedResult.stdout.trim()) {
       result.hasUntracked = true;
     }
 
     // 5. Check for merge conflicts
-    const conflictCheck = execSync('git diff --name-only --diff-filter=U', { cwd })
-      .toString().trim();
-    
-    if (conflictCheck) {
+    const conflictResult = await commandRunner.execAsync('git diff --name-only --diff-filter=U', cwd);
+    if (conflictResult.stdout.trim()) {
       result.hasConflicts = true;
     }
 
@@ -95,7 +92,7 @@ export function fastCheckWorkingDirectory(cwd: string): GitIndexStatus {
 /**
  * Get count of commits ahead/behind using rev-list (faster than rev-parse)
  */
-export function fastGetAheadBehind(cwd: string, baseBranch: string): { ahead: number; behind: number } {
+export async function fastGetAheadBehind(cwd: string, baseBranch: string, commandRunner: CommandRunner): Promise<{ ahead: number; behind: number }> {
   // Check if the directory exists before attempting git operations
   try {
     fs.accessSync(cwd, fs.constants.F_OK);
@@ -105,10 +102,10 @@ export function fastGetAheadBehind(cwd: string, baseBranch: string): { ahead: nu
   }
 
   try {
-    const result = execSync(`git rev-list --left-right --count ${baseBranch}...HEAD`, { cwd })
-      .toString().trim();
+    const result = await commandRunner.execAsync(`git rev-list --left-right --count ${baseBranch}...HEAD`, cwd);
+    const trimmed = result.stdout.trim();
 
-    const [behind, ahead] = result.split('\t').map(n => parseInt(n, 10));
+    const [behind, ahead] = trimmed.split('\t').map(n => parseInt(n, 10));
     return {
       ahead: ahead || 0,
       behind: behind || 0
@@ -121,7 +118,7 @@ export function fastGetAheadBehind(cwd: string, baseBranch: string): { ahead: nu
 /**
  * Get statistics about changes (additions/deletions) efficiently
  */
-export function fastGetDiffStats(cwd: string): { additions: number; deletions: number; filesChanged: number } {
+export async function fastGetDiffStats(cwd: string, commandRunner: CommandRunner): Promise<{ additions: number; deletions: number; filesChanged: number }> {
   // Check if the directory exists before attempting git operations
   try {
     fs.accessSync(cwd, fs.constants.F_OK);
@@ -132,13 +129,14 @@ export function fastGetDiffStats(cwd: string): { additions: number; deletions: n
 
   try {
     // Use numstat for machine-readable output (faster to parse)
-    const result = execSync('git diff --numstat', { cwd }).toString().trim();
+    const result = await commandRunner.execAsync('git diff --numstat', cwd);
+    const trimmed = result.stdout.trim();
 
-    if (!result) {
+    if (!trimmed) {
       return { additions: 0, deletions: 0, filesChanged: 0 };
     }
 
-    const lines = result.split('\n');
+    const lines = trimmed.split('\n');
     let additions = 0;
     let deletions = 0;
 
@@ -157,4 +155,3 @@ export function fastGetDiffStats(cwd: string): { additions: number; deletions: n
     return { additions: 0, deletions: 0, filesChanged: 0 };
   }
 }
-
