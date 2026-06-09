@@ -1204,6 +1204,17 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
           const unsubscribeAltScreen = window.electronAPI.events.onTerminalAlternateScreen((data: { panelId: string; active: boolean }) => {
             if (data.panelId === panel.id) {
               tuiActiveRef.current = data.active;
+              // When a TUI app (vim, htop, opencode, etc.) enters alternate screen,
+              // disable xterm scrollback so mouse-wheel events pass through to the
+              // app instead of scrolling xterm's buffer. Restore on exit.
+              if (terminal && !disposed) {
+                if (data.active) {
+                  terminal.options.scrollback = 0;
+                  terminal.clear();
+                } else {
+                  terminal.options.scrollback = 2500;
+                }
+              }
             }
           });
 
@@ -1214,6 +1225,11 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
               if (disposed || info == null || typeof info !== 'object') return;
               const { isAlternateScreen } = info as { isAlternateScreen: boolean };
               tuiActiveRef.current = isAlternateScreen;
+              // Apply scrollback=0 for already-running TUI apps on remount
+              if (isAlternateScreen && terminal && !disposed) {
+                terminal.options.scrollback = 0;
+                terminal.clear();
+              }
             })
             .catch(() => { /* terminal may not exist yet — ignore */ });
 
@@ -1223,6 +1239,8 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
               // Reset TUI passthrough so Pane shortcuts work again on the dead terminal
               tuiActiveRef.current = false;
               if (terminal && !disposed) {
+                // Restore scrollback in case a TUI app was running when the process exited
+                terminal.options.scrollback = 2500;
                 // Detect crash signals: SIGABRT(6), SIGBUS(7), SIGSEGV(11)
                 const crashSignals: Record<number, string> = { 6: 'SIGABRT', 7: 'SIGBUS', 11: 'SIGSEGV' };
                 const crashSignalName = data.signal ? crashSignals[data.signal] : null;
