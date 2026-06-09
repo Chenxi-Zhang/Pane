@@ -292,7 +292,7 @@ export function Sidebar({ onAboutClick, onSettingsClick, isSettingsOpen, onSetti
                     const isWaitingForInput = sessionPanels.some(p => activityStatus[p.id] === 'waiting_for_input');
                     const hasUnviewed = sessionPanels.some(p => activityStatus[p.id] === 'unviewed');
                     const statusStyle = isSessionActive
-                      ? 'border-2 border-status-info bg-transparent'
+                      ? 'bg-status-info animate-pulse'
                       : isWaitingForInput
                         ? 'bg-orange-400 animate-pulse'
                         : hasUnviewed

@@ -463,7 +463,7 @@ export function ProjectSessionList({
                         <span className={cn(
                           "w-2 h-2 rounded-full flex-shrink-0 transition-all",
                           projectActivity === 'active'
-                            ? 'border-2 border-status-info bg-transparent'
+                            ? 'bg-status-info animate-pulse'
                             : projectActivity === 'waiting_for_input'
                               ? 'bg-orange-400 animate-pulse'
                               : projectActivity === 'unviewed'
@@ -669,7 +669,11 @@ function SessionRow({
   const dels = (gs?.commitDeletions ?? 0) + (gs?.deletions ?? 0);
   const hasDiff = adds > 0 || dels > 0;
   const showActivityRail = sessionActivity === 'active' || sessionActivity === 'waiting_for_input' || sessionActivity === 'unviewed';
-  const activityRailColor = sessionActivity === 'waiting_for_input' ? 'bg-orange-400' : 'bg-status-info';
+  const activityRailColor = sessionActivity === 'active'
+    ? 'bg-status-info animate-pulse'
+    : sessionActivity === 'waiting_for_input'
+      ? 'bg-orange-400 animate-pulse'
+      : 'bg-status-info';
 
   return (
     <Tooltip
