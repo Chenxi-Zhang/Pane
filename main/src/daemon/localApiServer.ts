@@ -2,6 +2,7 @@ import http, { type IncomingMessage, type ServerResponse } from 'http';
 import { terminalPanelManager } from '../services/terminalPanelManager';
 
 const LOCAL_API_PORT = 11777;
+const LOCAL_API_MAX_PORT = 11797; // try up to 20 ports (11777–11796)
 const LOCAL_API_HOST = '0.0.0.0';
 
 type ExternalActivityStatus = 'active' | 'idle' | 'waiting_for_input';
@@ -15,6 +16,11 @@ interface LocalApiResponse {
 export class PaneLocalApiServer {
   private server: http.Server | null = null;
   private port: number = LOCAL_API_PORT;
+  private static activeInstance: PaneLocalApiServer | null = null;
+
+  static getActivePort(): number {
+    return PaneLocalApiServer.activeInstance?.port ?? LOCAL_API_PORT;
+  }
 
   getPort(): number {
     return this.port;
@@ -36,42 +42,56 @@ export class PaneLocalApiServer {
       });
     });
 
-    const tryPort = preferredPort ?? LOCAL_API_PORT;
+    const startPort = preferredPort ?? LOCAL_API_PORT;
 
-    await new Promise<void>((resolve, reject) => {
-      const handleError = (error: Error) => {
-        server.removeListener('listening', handleListening);
-        this.server = null;
-        reject(error);
-      };
-
-      const handleListening = () => {
-        server.removeListener('error', handleError);
-        resolve();
-      };
-
-      server.once('error', handleError);
-      server.once('listening', handleListening);
-      server.listen(tryPort, LOCAL_API_HOST);
-    });
-
-    server.on('error', (error) => {
-      console.error('[Pane local API] HTTP server error:', error);
-    });
-
-    this.server = server;
-
-    const address = server.address();
-    if (address && typeof address === 'object') {
-      this.port = address.port;
+    let lastError: Error | undefined;
+    for (let port = startPort; port <= LOCAL_API_MAX_PORT; port++) {
+      try {
+        await this.tryListen(server, port);
+        this.server = server;
+        this.port = port;
+        PaneLocalApiServer.activeInstance = this;
+        console.warn(`[Pane local API] Listening on http://${LOCAL_API_HOST}:${port}`);
+        return;
+      } catch (error) {
+        lastError = error as Error;
+        if ((error as NodeJS.ErrnoException).code === 'EADDRINUSE') {
+          console.warn(`[Pane local API] Port ${port} in use, trying ${port + 1}...`);
+          continue;
+        }
+        throw error;
+      }
     }
 
-    console.warn(`[Pane local API] Listening on http://${LOCAL_API_HOST}:${this.port}`);
+    this.server = null;
+    throw new Error(
+      `All ports from ${startPort} to ${LOCAL_API_MAX_PORT} are in use`,
+      { cause: lastError },
+    );
+  }
+
+  private tryListen(server: http.Server, port: number): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      const onError = (error: Error) => {
+        server.removeListener('listening', onListening);
+        reject(error);
+      };
+      const onListening = () => {
+        server.removeListener('error', onError);
+        resolve();
+      };
+      server.once('error', onError);
+      server.once('listening', onListening);
+      server.listen(port, LOCAL_API_HOST);
+    });
   }
 
   async stop(): Promise<void> {
     const server = this.server;
     this.server = null;
+    if (PaneLocalApiServer.activeInstance === this) {
+      PaneLocalApiServer.activeInstance = null;
+    }
 
     if (server) {
       await new Promise<void>((resolve) => {
@@ -113,6 +133,7 @@ export class PaneLocalApiServer {
   }
 
   private async handleTerminalActivity(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    console.log('[Pane local API] Incoming request: POST /terminal/activity');
     const body = await this.readBody(request);
 
     let parsed: unknown;

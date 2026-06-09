@@ -10,6 +10,11 @@ import { ShellDetector } from '../utils/shellDetector';
 import type { AnalyticsManager } from './analyticsManager';
 import { getWSLShellSpawn, buildWSLENV, WSLContext, getWslHostIp } from '../utils/wslUtils';
 import { GIT_ATTRIBUTION_ENV } from '../utils/attribution';
+import { PaneLocalApiServer } from '../daemon/localApiServer';
+
+function getLocalApiPort(): number {
+  return PaneLocalApiServer.getActivePort();
+}
 import {
   type FlowControlRecord,
   createFlowControlRecord,
@@ -719,8 +724,8 @@ export class TerminalPanelManager {
       PANE_PORT: String(panePort),
       PANE_WORKSPACE_PATH: cwd,
       PANE_LOCAL_API_URL: isWSL
-        ? `http://${getWslHostIp() || '127.0.0.1'}:11777`
-        : `http://127.0.0.1:11777`,
+        ? `http://${getWslHostIp() || '127.0.0.1'}:${getLocalApiPort()}`
+        : `http://127.0.0.1:${getLocalApiPort()}`,
       ...wslEnvVars,
     };
 
