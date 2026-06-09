@@ -1150,25 +1150,15 @@ if (launchRemoteSetup) {
     await versionChecker.checkOnStartup();
   }, 1000); // Small delay to ensure window is fully ready
 
-// Initialize worktree pool — cleanup orphans and seed reserves
+// Initialize worktree pool — cleanup orphans and seed reserves for the active project only.
+// Non-active projects are cleaned up lazily when selected.
   setTimeout(async () => {
     try {
-      const projects = databaseService.getAllProjects();
-      // Cleanup leftover reserves from previous runs — await before seeding new ones
-      await Promise.all(
-        projects
-          .filter(p => p.path)
-          .map(project => {
-            const ctx = sessionManager.getProjectContextByProjectId(project.id);
-            if (!ctx) return Promise.resolve();
-            return worktreePoolManager.cleanupOrphanedReserves(project.path!, ctx.commandRunner).catch(() => {});
-          })
-      );
-      // Seed a reserve for the active project
       const activeProject = sessionManager.getActiveProject();
       if (activeProject?.path) {
         const ctx = sessionManager.getProjectContextByProjectId(activeProject.id);
         if (ctx) {
+          await worktreePoolManager.cleanupOrphanedReserves(activeProject.path, ctx.commandRunner).catch(() => {});
           const mainBranch = await worktreeManager.getProjectMainBranch(activeProject.path, ctx.commandRunner).catch(() => 'HEAD');
           worktreePoolManager.createReserve(
             activeProject.path,

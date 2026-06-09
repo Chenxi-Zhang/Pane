@@ -233,77 +233,61 @@ class WorktreePoolManager {
    * branches from a previous run and remove them.
    */
   async cleanupOrphanedReserves(projectPath: string, commandRunner: CommandRunner): Promise<void> {
-    let worktreeListOutput: string;
-    try {
-      const { stdout } = await commandRunner.execAsync(
-        `git worktree list --porcelain`,
-        projectPath,
-        { timeout: 30000 }
-      );
-      worktreeListOutput = stdout;
-    } catch (error) {
-      console.warn('[WorktreePool] Failed to list worktrees during cleanup:', error);
-      return;
-    }
+    // Fetch worktree list and branch list in parallel — they are independent.
+    const [worktreeResult, branchResult] = await Promise.all([
+      commandRunner.execAsync('git worktree list --porcelain', projectPath, { timeout: 30000 })
+        .catch(error => { console.warn('[WorktreePool] Failed to list worktrees during cleanup:', error); return null; }),
+      commandRunner.execAsync('git branch -l', projectPath, { timeout: 15000 })
+        .catch(error => { console.warn('[WorktreePool] Failed to list branches during cleanup:', error); return null; })
+    ]);
 
-    // Parse porcelain output: lines starting with "worktree " give the path
-    // Exclude paths that belong to currently-tracked (just-created) reserves
-    const activeReservePaths = new Set([...this.reserves.values()].map(r => r.reservePath));
-    const orphanPaths: string[] = [];
-    for (const line of worktreeListOutput.split('\n')) {
-      if (line.startsWith('worktree ')) {
-        const wtPath = line.substring('worktree '.length).trim();
-        const dirName = path.basename(wtPath);
-        if (/^_reserve-[0-9a-f]{8}$/.test(dirName) && !activeReservePaths.has(wtPath)) {
-          orphanPaths.push(wtPath);
+    // Remove orphaned reserve worktrees
+    if (worktreeResult) {
+      const activeReservePaths = new Set([...this.reserves.values()].map(r => r.reservePath));
+      const orphanPaths: string[] = [];
+      for (const line of worktreeResult.stdout.split('\n')) {
+        if (line.startsWith('worktree ')) {
+          const wtPath = line.substring('worktree '.length).trim();
+          const dirName = path.basename(wtPath);
+          if (/^_reserve-[0-9a-f]{8}$/.test(dirName) && !activeReservePaths.has(wtPath)) {
+            orphanPaths.push(wtPath);
+          }
+        }
+      }
+
+      for (const wtPath of orphanPaths) {
+        console.log(`[WorktreePool] Removing orphaned reserve worktree: ${wtPath}`);
+        try {
+          await commandRunner.execAsync(
+            `git worktree remove --force ${escapeShellArg(wtPath)}`,
+            projectPath,
+            { timeout: 30000 }
+          );
+        } catch (error) {
+          console.warn(`[WorktreePool] Failed to remove orphaned worktree ${wtPath}:`, error);
         }
       }
     }
 
-    for (const wtPath of orphanPaths) {
-      console.log(`[WorktreePool] Removing orphaned reserve worktree: ${wtPath}`);
-      try {
-        await commandRunner.execAsync(
-          `git worktree remove --force ${escapeShellArg(wtPath)}`,
-          projectPath,
-          { timeout: 30000 }
-        );
-      } catch (error) {
-        console.warn(`[WorktreePool] Failed to remove orphaned worktree ${wtPath}:`, error);
-      }
-    }
+    // Remove orphaned reserve branches
+    if (branchResult) {
+      const activeBranches = new Set([...this.reserves.values()].map(r => r.branchName));
+      const orphanBranches = branchResult.stdout
+        .split('\n')
+        .map(line => line.replace(/^[*+]?\s*/, '').trim())
+        .filter(branch => branch.startsWith('_reserve/') && !activeBranches.has(branch));
 
-    // Clean up orphaned reserve branches
-    let branchListOutput: string;
-    try {
-      const { stdout } = await commandRunner.execAsync(
-        `git branch -l`,
-        projectPath,
-        { timeout: 15000 }
-      );
-      branchListOutput = stdout;
-    } catch (error) {
-      console.warn('[WorktreePool] Failed to list branches during cleanup:', error);
-      return;
-    }
-
-    // Exclude branches that belong to currently-tracked (just-created) reserves
-    const activeBranches = new Set([...this.reserves.values()].map(r => r.branchName));
-    const orphanBranches = branchListOutput
-      .split('\n')
-      .map(line => line.replace(/^[*+]?\s*/, '').trim())
-      .filter(branch => branch.startsWith('_reserve/') && !activeBranches.has(branch));
-
-    for (const branch of orphanBranches) {
-      console.log(`[WorktreePool] Removing orphaned reserve branch: ${branch}`);
-      try {
-        await commandRunner.execAsync(
-          `git branch -D ${escapeShellArg(branch)}`,
-          projectPath,
-          { timeout: 15000 }
-        );
-      } catch (error) {
-        console.warn(`[WorktreePool] Failed to delete orphaned branch ${branch}:`, error);
+      for (const branch of orphanBranches) {
+        console.log(`[WorktreePool] Removing orphaned reserve branch: ${branch}`);
+        try {
+          await commandRunner.execAsync(
+            `git branch -D ${escapeShellArg(branch)}`,
+            projectPath,
+            { timeout: 15000 }
+          );
+        } catch (error) {
+          console.warn(`[WorktreePool] Failed to delete orphaned branch ${branch}:`, error);
+        }
       }
     }
   }
