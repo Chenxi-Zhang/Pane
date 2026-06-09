@@ -781,9 +781,17 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
 
         // FIX: Additional check before DOM manipulation
         if (terminalRef.current && !disposed) {
-          console.log('[TerminalPanel] Opening terminal in DOM element:', terminalRef.current);
-          terminal.open(terminalRef.current);
-          console.log('[TerminalPanel] Terminal opened in DOM');
+          if (restoredFromCache && terminal.element) {
+            // Cached terminal already has an open DOM tree — reattach it to the
+            // new container instead of calling .open() again (xterm forbids a
+            // second .open() on a live Terminal, throwing or rendering blank).
+            console.log('[TerminalPanel] Reattaching cached terminal to new container');
+            terminalRef.current.appendChild(terminal.element);
+          } else {
+            console.log('[TerminalPanel] Opening terminal in DOM element:', terminalRef.current);
+            terminal.open(terminalRef.current);
+            console.log('[TerminalPanel] Terminal opened in DOM');
+          }
 
           // Wait for fonts to load before fitting so xterm measures correct cell dimensions
           await Promise.all([

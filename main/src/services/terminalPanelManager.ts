@@ -1181,8 +1181,8 @@ export class TerminalPanelManager {
       return;
     }
 
-    // Reject unreasonably small dimensions (likely from hidden container)
-    if (cols < 20 || rows < 5) {
+    // Reject invalid or unreasonably small dimensions (likely from hidden container)
+    if (!Number.isFinite(cols) || !Number.isFinite(rows) || cols < 20 || rows < 5) {
       console.warn(`[TerminalPanelManager] Rejecting invalid resize ${cols}x${rows} for ${panelId}`);
       return;
     }

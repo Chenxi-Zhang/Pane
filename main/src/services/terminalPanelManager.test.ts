@@ -13,6 +13,10 @@ vi.mock('./panelManager', () => ({
   },
 }));
 
+vi.mock('./database', () => ({
+  databaseService: {},
+}));
+
 vi.mock('../utils/shellPath', () => ({
   getShellPath: () => '',
 }));
@@ -38,6 +42,7 @@ type TerminalUnderTest = {
   pty: {
     pause: ReturnType<typeof vi.fn>;
     resume: ReturnType<typeof vi.fn>;
+    resize: ReturnType<typeof vi.fn>;
   };
   isPtyHost: boolean;
   panelId: string;
@@ -75,6 +80,7 @@ function createTerminal(overrides: Partial<TerminalUnderTest> = {}): TerminalUnd
     pty: {
       pause: vi.fn(),
       resume: vi.fn(),
+      resize: vi.fn(),
     },
     isPtyHost: false,
     panelId: 'panel-1',
@@ -270,6 +276,40 @@ describe('TerminalPanelManager hidden output delivery', () => {
     manager.setVisibility(terminal.panelId, false, 'local:host');
 
     expect(terminal.isVisible).toBe(false);
+    disposeFlowControlRecord(terminal.flowControl);
+  });
+});
+
+describe('TerminalPanelManager terminal resizing', () => {
+  afterEach(() => {
+    resetPaneRuntimeForTests();
+  });
+
+  it.each([
+    [0, 30],
+    [80, 0],
+    [Number.NaN, 30],
+    [80, Number.NaN],
+    [Number.POSITIVE_INFINITY, 30],
+    [80, Number.POSITIVE_INFINITY],
+  ])('rejects invalid dimensions %sx%s before calling the pty', (cols, rows) => {
+    const manager = new TerminalPanelManager() as unknown as VisibilityAccess & TerminalPanelManager;
+    const terminal = createTerminal({
+      pty: {
+        pause: vi.fn(),
+        resume: vi.fn(),
+        resize: vi.fn(() => {
+          throw new Error('node-pty resize should not be called for invalid dimensions');
+        }),
+      },
+      outputBuffer: '',
+    });
+    manager.terminals.set(terminal.panelId, terminal);
+
+    manager.resizeTerminal(terminal.panelId, cols, rows);
+
+    expect(terminal.pty.resize).not.toHaveBeenCalled();
+    expect(manager.terminals.get(terminal.panelId)).toBe(terminal);
     disposeFlowControlRecord(terminal.flowControl);
   });
 });
