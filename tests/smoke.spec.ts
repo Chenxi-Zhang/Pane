@@ -96,6 +96,45 @@ test.describe('Smoke Tests', () => {
     await expect(sidebarMenuButton).toBeVisible();
   });
 
+  test('Add Tool menu opens for an active pane', async ({ page }) => {
+    await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 30000 });
+
+    await dismissStartupDialogs(page);
+
+    await page.evaluate(() => {
+      const mock = (window as typeof window & {
+        __paneTestElectronMock?: {
+          emitRemoteDaemonResyncRequested: () => void;
+          setSessions: (sessions: Array<Record<string, unknown>>) => void;
+        };
+      }).__paneTestElectronMock;
+
+      mock?.setSessions([{
+        id: 'add-tool-session',
+        name: 'Add Tool Smoke Pane',
+        worktreePath: '/tmp/add-tool-session',
+        prompt: 'add tool smoke',
+        status: 'stopped',
+        createdAt: new Date().toISOString(),
+        lastActivity: new Date().toISOString(),
+        output: [],
+        jsonMessages: [],
+      }]);
+      mock?.emitRemoteDaemonResyncRequested();
+    });
+
+    await page.getByText('Add Tool Smoke Pane').click();
+    await expect(page.getByRole('button', { name: /Add Tool/i })).toBeVisible({ timeout: 5000 });
+
+    const addToolButton = page.getByRole('button', { name: /Add Tool/i });
+    await addToolButton.hover();
+    await addToolButton.click();
+
+    await expect(page.getByRole('menu')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByRole('menuitem', { name: /Terminal/i })).toBeVisible();
+    await expect(page.getByText('Something went wrong')).toHaveCount(0);
+  });
+
   test('Settings menu item is clickable', async ({ page }) => {
     await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 30000 });
 

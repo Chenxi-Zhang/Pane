@@ -271,11 +271,11 @@ export class PanelManager {
       if (updates.title !== undefined) panel.title = updates.title;
       if (updates.state !== undefined) panel.state = updates.state;
       if (updates.metadata !== undefined) panel.metadata = updates.metadata;
-      
-      // Emit IPC event to notify frontend
-      this.sendRendererEvent('panel:updated', panel);
-      
-      console.log(`[PanelManager] Updated panel ${panelId}`);
+
+      // NOTE: panel:updated IPC event removed — no frontend subscriber exists.
+      // The frontend re-fetches panels on session change / resync; individual
+      // field updates (activity status, alternate screen, etc.) already have
+      // their own dedicated IPC channels.
     });
   }
   

@@ -58,6 +58,25 @@ Analyze this project's actual framework and structure first, then create the com
 IMPORTANT: After creating the script, TEST THE RESTART PATH — run 'node scripts/pane-run-script.js', then kill it ungracefully (Ctrl+C or kill the terminal), then run it again. It must reclaim the same port without EADDRINUSE or lock file errors. A single happy-path run proves nothing. Then commit and merge to main so all future worktrees have it.`;
 }
 
+const PanelActivityDot: React.FC<{ panelId: string }> = memo(({ panelId }) => {
+  const status = usePanelStore((state) => state.activityStatus[panelId] ?? 'idle');
+
+  return (
+    <span className={cn(
+      "w-2 h-2 rounded-full flex-shrink-0 transition-all",
+      status === 'active'
+        ? 'border-2 border-status-info bg-transparent'
+        : status === 'waiting_for_input'
+          ? 'bg-orange-400 animate-pulse'
+          : status === 'unviewed'
+            ? 'bg-status-info'
+            : 'bg-text-muted/20 opacity-40'
+    )} />
+  );
+});
+
+PanelActivityDot.displayName = 'PanelActivityDot';
+
 export const PanelTabBar: React.FC<PanelTabBarProps> = memo(({
   panels,
   activePanel,
@@ -92,8 +111,6 @@ export const PanelTabBar: React.FC<PanelTabBarProps> = memo(({
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['pane-app']));
   const { snapshot, isLoading: resourceLoading, startActive, stopActive, refresh } = useResourceMonitor();
   const [popoverStyle, setPopoverStyle] = useState<React.CSSProperties>({});
-
-  const getPanelActivityStatus = usePanelStore(s => s.getPanelActivityStatus);
 
   const customCommands = config?.customCommands ?? [];
   const hotkeys = useHotkeyStore((s) => s.hotkeys);
@@ -586,16 +603,7 @@ export const PanelTabBar: React.FC<PanelTabBarProps> = memo(({
               ) : (
                 <span className="inline-flex items-center justify-center gap-2 min-w-0">
                   {panel.type === 'terminal' && (
-                    <span className={cn(
-                      "w-2 h-2 rounded-full flex-shrink-0 transition-all",
-                      getPanelActivityStatus(panel.id) === 'active'
-                        ? 'border-2 border-status-info bg-transparent'
-                        : getPanelActivityStatus(panel.id) === 'waiting_for_input'
-                          ? 'bg-orange-400 animate-pulse'
-                          : getPanelActivityStatus(panel.id) === 'unviewed'
-                            ? 'bg-status-info'
-                            : 'bg-text-muted/20 opacity-40'
-                    )} />
+                    <PanelActivityDot panelId={panel.id} />
                   )}
                   {getPanelIcon(panel.type, panel)}
                   <span>{displayTitle}</span>

@@ -6,6 +6,7 @@ export interface PanelStore {
   activePanels: Record<string, string>;       // sessionId -> active panelId
   activityStatus: Record<string, 'active' | 'idle' | 'unviewed' | 'waiting_for_input'>; // panelId -> status
   lastActivityAt: Record<string, string>;     // panelId -> last PTY output timestamp
+  isAlternateScreen: Record<string, boolean>; // panelId -> true when TUI (alternate screen buffer) is active
 
   // Synchronous state update actions
   setPanels: (sessionId: string, panels: ToolPanel[]) => void;
@@ -15,6 +16,7 @@ export interface PanelStore {
   updatePanelState: (panel: ToolPanel) => void;
   setActivityStatus: (panelId: string, status: 'active' | 'idle' | 'unviewed' | 'waiting_for_input', lastActivityAt?: string) => void;
   clearActivityStatus: (panelId: string) => void;
+  setAlternateScreen: (panelId: string, active: boolean) => void;
 
   // Getters
   getSessionPanels: (sessionId: string) => ToolPanel[];

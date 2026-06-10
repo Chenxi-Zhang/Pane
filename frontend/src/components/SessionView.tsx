@@ -72,15 +72,13 @@ export const SessionView = memo(() => {
   });
 
   // Panel store state and actions
-  const {
-    panels,
-    activePanels,
-    setPanels,
-    setActivePanel: setActivePanelInStore,
-    addPanel,
-    removePanel,
-    updatePanelState,
-  } = usePanelStore();
+  const panels = usePanelStore((state) => state.panels);
+  const activePanels = usePanelStore((state) => state.activePanels);
+  const setPanels = usePanelStore((state) => state.setPanels);
+  const setActivePanelInStore = usePanelStore((state) => state.setActivePanel);
+  const addPanel = usePanelStore((state) => state.addPanel);
+  const removePanel = usePanelStore((state) => state.removePanel);
+  const updatePanelState = usePanelStore((state) => state.updatePanelState);
   
   // History store for navigation
   const { addToHistory } = useSessionHistoryStore();

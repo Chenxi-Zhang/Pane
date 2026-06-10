@@ -158,7 +158,6 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
   const effectiveVisible = useBatterySaverTerminalVisibility ? panelVisible && windowFocused : true;
   const [webglAllowed, setWebglAllowed] = useState(panelVisible);
   const blurDetachTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastMouseDebugLogAtRef = useRef(0);
 
   // Read CLI state from persisted panel state (handles remount case)
   const terminalState = panel.state?.customState as TerminalPanelState | undefined;
@@ -475,30 +474,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
 
   const handleTerminalMouseMove = useCallback((e: React.MouseEvent) => {
     onMouseMove(e);
-    const now = Date.now();
-    if (now - lastMouseDebugLogAtRef.current < 750) return;
-    lastMouseDebugLogAtRef.current = now;
-    const target = e.target instanceof HTMLElement ? e.target : null;
-    console.log('[TerminalPanel] DOM mousemove', {
-      panelId: panel.id,
-      targetTag: target?.tagName,
-      targetClass: target?.className,
-      selectionPopoverVisible: selectionPopover.visible,
-      filePopoverVisible: filePopover.visible,
-    });
-  }, [filePopover.visible, onMouseMove, panel.id, selectionPopover.visible]);
-
-  const handleTerminalMouseDown = useCallback((e: React.MouseEvent) => {
-    const target = e.target instanceof HTMLElement ? e.target : null;
-    console.log('[TerminalPanel] DOM mousedown', {
-      panelId: panel.id,
-      button: e.button,
-      targetTag: target?.tagName,
-      targetClass: target?.className,
-      selectionPopoverVisible: selectionPopover.visible,
-      filePopoverVisible: filePopover.visible,
-    });
-  }, [filePopover.visible, panel.id, selectionPopover.visible]);
+  }, [onMouseMove]);
 
   const getDropdownPosition = useCallback((): { x: number; y: number } => {
     const container = terminalRef.current;
@@ -1387,13 +1363,6 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
 
           // Handle terminal input — route through interceptor first
           const inputDisposable = terminal.onData((data) => {
-            if (data.includes('\x1b[<') || data.includes('\x1b[M')) {
-              console.log('[TerminalPanel] onData mouse sequence', {
-                panelId: panel.id,
-                length: data.length,
-                preview: JSON.stringify(data.slice(0, 40)),
-              });
-            }
             // Skip interception for AltGr-produced @ (e.g. German keyboard)
             if (skipNextInterceptRef.current) {
               skipNextInterceptRef.current = false;
@@ -1414,7 +1383,6 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
           // dropped. See VS Code (xterm.raw.onBinary → processBinary), Theia,
           // Tabby, and xterm's own AttachAddon for the same pattern.
           const binaryDisposable = terminal.onBinary((data) => {
-            console.log('[TerminalPanel] onBinary length:', data.length, 'panel:', panel.id);
             window.electronAPI.sendTerminalInput(panel.id, data);
           });
 
@@ -1681,7 +1649,6 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
     <div
       className="h-full w-full relative group/terminal"
       onMouseMove={handleTerminalMouseMove}
-      onMouseDown={handleTerminalMouseDown}
       onKeyDown={handleTerminalKeyDown}
     >
       <div ref={terminalRef} className="h-full w-full" />

@@ -12,7 +12,9 @@ export class LogsManager {
   private static instance: LogsManager;
   private activeProcesses = new Map<string, ChildProcess>(); // panelId -> process
   private scriptStartTimes = new Map<string, number>(); // panelId -> start timestamp
+  private pendingStatePersistTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private analyticsManager: AnalyticsManager | null = null;
+  private static readonly STATE_PERSIST_INTERVAL_MS = 1000;
   
   static getInstance(): LogsManager {
     if (!LogsManager.instance) {
@@ -30,6 +32,36 @@ export class LogsManager {
 
   private sendRendererEvent(channel: string, ...args: unknown[]): void {
     getPaneEventSink().send(channel, ...args);
+  }
+
+  private schedulePanelStatePersist(panelId: string, state: ToolPanel['state']): void {
+    if (this.pendingStatePersistTimers.has(panelId)) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      this.pendingStatePersistTimers.delete(panelId);
+      void panelManager.updatePanel(panelId, { state }).catch(error => {
+        console.warn(`[LogsManager] Failed to persist logs panel state for ${panelId}:`, error);
+      });
+    }, LogsManager.STATE_PERSIST_INTERVAL_MS);
+
+    this.pendingStatePersistTimers.set(panelId, timer);
+  }
+
+  private clearPendingPanelStatePersist(panelId: string): void {
+    const timer = this.pendingStatePersistTimers.get(panelId);
+    if (!timer) {
+      return;
+    }
+
+    clearTimeout(timer);
+    this.pendingStatePersistTimers.delete(panelId);
+  }
+
+  private async persistPanelStateNow(panelId: string, state: ToolPanel['state']): Promise<void> {
+    this.clearPendingPanelStatePersist(panelId);
+    await panelManager.updatePanel(panelId, { state });
   }
 
   /**
@@ -63,6 +95,8 @@ export class LogsManager {
    * Clear panel output and reset state
    */
   async clearPanel(panelId: string): Promise<void> {
+    this.clearPendingPanelStatePersist(panelId);
+
     const panel = await panelManager.getPanel(panelId);
     if (!panel) return;
     
@@ -421,18 +455,18 @@ export class LogsManager {
         warningCount++;
       }
       
-      await panelManager.updatePanel(panelId, {
-        state: {
-          ...panel.state,
-          customState: {
-            ...currentState,
-            outputBuffer,
-            errorCount,
-            warningCount,
-            lastActivityTime: new Date().toISOString()
-          } as LogsPanelState
-        }
-      });
+      panel.state = {
+        ...panel.state,
+        customState: {
+          ...currentState,
+          outputBuffer,
+          errorCount,
+          warningCount,
+          lastActivityTime: new Date().toISOString()
+        } as LogsPanelState
+      };
+
+      this.schedulePanelStatePersist(panelId, panel.state);
     }
   }
   
@@ -462,17 +496,16 @@ export class LogsManager {
     const panel = await panelManager.getPanel(panelId);
     if (panel) {
       const currentState = panel.state.customState as LogsPanelState || {};
-      await panelManager.updatePanel(panelId, {
-        state: {
-          ...panel.state,
-          customState: {
-            ...currentState,
-            isRunning: false,
-            endTime: new Date().toISOString(),
-            exitCode: code ?? undefined
-          } as LogsPanelState
-        }
-      });
+      panel.state = {
+        ...panel.state,
+        customState: {
+          ...currentState,
+          isRunning: false,
+          endTime: new Date().toISOString(),
+          exitCode: code ?? undefined
+        } as LogsPanelState
+      };
+      await this.persistPanelStateNow(panelId, panel.state);
     }
 
     // Emit process ended event

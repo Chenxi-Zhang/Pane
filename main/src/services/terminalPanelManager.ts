@@ -294,7 +294,6 @@ export class TerminalPanelManager {
     void panelManager.updatePanel(terminal.panelId, { state: panel.state }).catch(error => {
       console.warn(`[TerminalPanelManager] Failed to persist Codex session id for panel ${terminal.panelId}:`, error);
     });
-    console.log(`[TerminalPanelManager] Captured Codex session id for panel ${terminal.panelId}: ${agentSessionId}`);
   }
 
   setAnalyticsManager(analyticsManager: AnalyticsManager): void {
@@ -986,7 +985,7 @@ export class TerminalPanelManager {
       // Update last activity
       terminal.lastActivity = new Date();
 
-      if (!terminal.externalActivityControlled) {
+      if (!terminal.externalActivityControlled && !terminal.isAlternateScreen) {
         // Activity status transition: mark active on first byte after idle
         if (terminal.activityStatus !== 'active') {
           terminal.activityStatus = 'active';
@@ -1016,6 +1015,34 @@ export class TerminalPanelManager {
             panelId: terminal.panelId,
             active: newState
           });
+
+          if (!terminal.externalActivityControlled) {
+            if (newState) {
+              // TUI entered: clear pending idle timer and immediately mark idle.
+              // The frontend suppresses the notification for this transition.
+              if (terminal.idleTimer) {
+                clearTimeout(terminal.idleTimer);
+                terminal.idleTimer = null;
+              }
+              if (terminal.activityStatus !== 'idle') {
+                terminal.activityStatus = 'idle';
+                this.emitActivityStatus(terminal);
+              }
+            } else {
+              // TUI exited: immediately mark active and restart local activity
+              // detection without waiting for the next PTY output byte.
+              if (terminal.activityStatus !== 'active') {
+                terminal.activityStatus = 'active';
+                this.emitActivityStatus(terminal);
+              }
+              if (terminal.idleTimer) clearTimeout(terminal.idleTimer);
+              terminal.idleTimer = setTimeout(() => {
+                terminal.activityStatus = 'idle';
+                terminal.idleTimer = null;
+                this.emitActivityStatus(terminal);
+              }, IDLE_THRESHOLD_MS);
+            }
+          }
         }
       }
 
@@ -1177,6 +1204,23 @@ export class TerminalPanelManager {
       return;
     }
     terminal.lastActivity = new Date();
+
+    // User input drives activity status the same way PTY output does,
+    // so a panel stays active while the user is typing even if the agent
+    // hasn't responded yet. In TUI mode input is ignored — external
+    // signals own the status.
+    if (!terminal.externalActivityControlled && !terminal.isAlternateScreen) {
+      if (terminal.activityStatus !== 'active') {
+        terminal.activityStatus = 'active';
+        this.emitActivityStatus(terminal);
+      }
+      if (terminal.idleTimer) clearTimeout(terminal.idleTimer);
+      terminal.idleTimer = setTimeout(() => {
+        terminal.activityStatus = 'idle';
+        terminal.idleTimer = null;
+        this.emitActivityStatus(terminal);
+      }, IDLE_THRESHOLD_MS);
+    }
   }
   
   resizeTerminal(panelId: string, cols: number, rows: number): void {
@@ -1202,15 +1246,16 @@ export class TerminalPanelManager {
       return;
     }
     
-    // Update panel state with new dimensions
+    // Update panel dimensions in memory only.
+    // DB persistence happens on destroy/quit via saveTerminalState(),
+    // so we avoid a synchronous SQLite write on every resize event.
     const panel = panelManager.getPanel(panelId);
     if (panel) {
-      const state = panel.state;
-      state.customState = {
-        ...state.customState,
+      const cs = panel.state.customState as TerminalPanelState | undefined;
+      panel.state.customState = {
+        ...(cs ?? {}),
         dimensions: { cols, rows }
       } as TerminalPanelState;
-      panelManager.updatePanel(panelId, { state });
     }
   }
   

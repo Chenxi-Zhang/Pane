@@ -353,7 +353,26 @@ try {
   // Ignore if IPC is not available for some reason
 }
 
-// In development mode, capture console logs and send them to main process for Claude Code debugging
+function isRendererConsoleForwardingEnabled(level: 'log' | 'warn' | 'error' | 'info' | 'debug'): boolean {
+  if (level === 'warn' || level === 'error') {
+    return true;
+  }
+
+  if (process.env.PANE_CAPTURE_RENDERER_LOGS === '1') {
+    return true;
+  }
+
+  try {
+    return window.localStorage.getItem('pane.verboseLogging') === 'true';
+  } catch {
+    return false;
+  }
+}
+
+// In development mode, capture important renderer logs for debugging. Keep
+// high-volume log/info/debug forwarding opt-in: every forwarded console call
+// crosses IPC and writes a debug log in the main process, which can make the
+// whole app feel sluggish when terminal or render paths are noisy.
 if (process.env.NODE_ENV !== 'production') {
   const originalConsole = {
     log: console.log,
@@ -368,7 +387,11 @@ if (process.env.NODE_ENV !== 'production') {
     (console as unknown as Record<string, (...args: unknown[]) => void>)[level] = (...args: unknown[]) => {
       // Call original console first so they still appear in DevTools
       (originalConsole as unknown as Record<string, (...args: unknown[]) => void>)[level](...args);
-      
+
+      if (!isRendererConsoleForwardingEnabled(level)) {
+        return;
+      }
+       
       // Send to main process for file logging
       try {
         invokeIpc('console:log', {

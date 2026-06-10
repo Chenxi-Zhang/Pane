@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { startPerformanceDiagnostics } from './utils/performanceDiagnostics';
 import './index.css';
 import './styles/markdown-preview.css';
 import './styles/notebook-preview.css';
@@ -78,6 +79,8 @@ void Promise.all([
   document.fonts.load('14px "Geist Mono"').catch(() => {}),
   document.fonts.load('14px "Symbols Nerd Font Mono"').catch(() => {}),
 ]);
+
+startPerformanceDiagnostics();
 
 // Swallow OS file drops outside of registered drop zones (terminal, editor, etc.)
 // Without this, Chromium's default behavior on a file drop is to navigate the

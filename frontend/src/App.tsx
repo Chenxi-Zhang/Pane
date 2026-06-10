@@ -118,6 +118,15 @@ function App() {
     return () => unsubscribe?.();
   }, []);
 
+  // Global TUI alternate-screen listener — tracks which panels are in TUI mode
+  // so the notification system can skip debounce on TUI idle transitions.
+  useEffect(() => {
+    const unsubscribe = window.electronAPI?.events?.onTerminalAlternateScreen?.((data: { panelId: string; active: boolean }) => {
+      usePanelStore.getState().setAlternateScreen(data.panelId, data.active);
+    });
+    return () => unsubscribe?.();
+  }, []);
+
   // Keyboard shortcuts
 
   useHotkey({

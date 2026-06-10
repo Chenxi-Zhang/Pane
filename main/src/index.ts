@@ -34,6 +34,7 @@ if (process.platform === 'win32') {
 import { BrowserWindow, Menu, ipcMain, shell, dialog, IpcMainInvokeEvent, session, WebContents, webContents, WebContentsView } from 'electron';
 import * as path from 'path';
 import * as os from 'os';
+import { monitorEventLoopDelay } from 'perf_hooks';
 import type { SessionManager } from './services/sessionManager';
 import type { ConfigManager } from './services/configManager';
 import type { WorktreeManager } from './services/worktreeManager';
@@ -77,6 +78,25 @@ let devToolsHandlersRegistered = false;
 // Track partitions that already have the localhost header-stripping hook registered,
 // so we don't add duplicate listeners when multiple webviews share the same partition.
 const registeredPartitions = new Set<string>();
+
+function startMainPerformanceDiagnostics() {
+  if (process.env.PANE_PERF_DIAGNOSTICS !== '1') return;
+
+  const histogram = monitorEventLoopDelay({ resolution: 20 });
+  histogram.enable();
+
+  setInterval(() => {
+    const maxMs = histogram.max / 1_000_000;
+    const p95Ms = histogram.percentile(95) / 1_000_000;
+    if (maxMs > 100) {
+      console.warn('[PerfDiagnostics] main event loop lag', {
+        p95Ms: Math.round(p95Ms),
+        maxMs: Math.round(maxMs),
+      });
+    }
+    histogram.reset();
+  }, 5_000);
+}
 
 // Module-level shutdown guard to prevent multiple shutdown attempts
 let shutdownInProgress = false;
@@ -989,12 +1009,13 @@ async function initializeServices() {
     if (isDevelopment) {
       const logLine = `[${timestamp}] [${source.toUpperCase()} ${level.toUpperCase()}] ${message}\n`;
       const debugLogPath = path.join(process.cwd(), 'frontend-debug.log');
-      try {
-        fs.appendFileSync(debugLogPath, logLine);
-      } catch (error) {
+      fs.appendFile(debugLogPath, logLine, (error) => {
+        if (!error) return;
         console.error('Failed to write console log to debug file:', error);
+      });
+      if (level === 'warn' || level === 'error' || toMainLog) {
+        console.log(`[Frontend ${level}] ${message}`);
       }
-      console.log(`[Frontend ${level}] ${message}`);
     }
 
     if (toMainLog) {
@@ -1024,6 +1045,7 @@ if (launchRemoteSetup) {
 } else {
   app.whenReady().then(async () => {
     appStartTime = Date.now();
+    startMainPerformanceDiagnostics();
 
     console.log('[Main] App is ready, initializing services...');
     await initializeServices();

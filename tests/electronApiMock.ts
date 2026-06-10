@@ -63,6 +63,7 @@ export async function installElectronApiMock(page: Page) {
       remoteDaemon: clone(remoteDaemonConfig),
     };
     let mockSessions: Array<Record<string, unknown>> = [];
+    let mockPanelsBySession: Record<string, Array<Record<string, unknown>>> = {};
     let cloudDisconnectError: string | null = null;
     let configGetCount = 0;
     let sessionsGetCount = 0;
@@ -124,6 +125,9 @@ export async function installElectronApiMock(page: Page) {
         }
         if (prop === 'onRemoteDaemonResyncRequested') {
           return (callback: () => void) => subscribe('remote-daemon:resync-required', callback);
+        }
+        if (prop === 'onPanelActivityStatus') {
+          return (callback: (event: unknown) => void) => subscribe('panel:activityStatus', callback);
         }
         return () => unsubscribe;
       },
@@ -234,7 +238,7 @@ export async function installElectronApiMock(page: Page) {
         starRepo: () => success({}),
       }),
       panels: namespace({
-        getSessionPanels: () => success([]),
+        getSessionPanels: (sessionId: string) => success(clone(mockPanelsBySession[sessionId] ?? [])),
         shouldAutoCreate: () => success(false),
       }),
       permissions: namespace({
@@ -504,6 +508,15 @@ export async function installElectronApiMock(page: Page) {
         },
         setSessions(sessions: Array<Record<string, unknown>>) {
           mockSessions = clone(sessions);
+        },
+        setPanels(sessionId: string, panels: Array<Record<string, unknown>>) {
+          mockPanelsBySession = {
+            ...mockPanelsBySession,
+            [sessionId]: clone(panels),
+          };
+        },
+        emitPanelActivityStatus(event: Record<string, unknown>) {
+          emit('panel:activityStatus', clone(event));
         },
         getSessionsReadCount() {
           return sessionsGetCount;

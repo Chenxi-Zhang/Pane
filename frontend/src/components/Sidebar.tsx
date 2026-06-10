@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { memo, useState, useEffect, useMemo, useCallback } from 'react';
 import { Settings } from './Settings';
 import { CreateSessionDialog } from './CreateSessionDialog';
 import { ProjectSessionList, ArchivedSessions } from './ProjectSessionList';
@@ -41,6 +41,29 @@ function CollapsedProjectTooltip({ project, sessionCount }: { project: Project; 
     </div>
   );
 }
+
+const CollapsedSessionActivityDot = memo(({ sessionId }: { sessionId: string }) => {
+  const status = usePanelStore(s => {
+    const sessionPanels = s.panels[sessionId] || [];
+    const statuses = sessionPanels.map(p => s.activityStatus[p.id]).filter(Boolean);
+    if (statuses.includes('active')) return 'active';
+    if (statuses.includes('waiting_for_input')) return 'waiting_for_input';
+    if (statuses.includes('unviewed')) return 'unviewed';
+    return 'idle';
+  });
+
+  const statusStyle = status === 'active'
+    ? 'bg-status-info animate-pulse'
+    : status === 'waiting_for_input'
+      ? 'bg-orange-400 animate-pulse'
+      : status === 'unviewed'
+        ? 'bg-status-info'
+        : 'bg-text-muted/20 opacity-40';
+
+  return <div className={`w-2.5 h-2.5 rounded-full transition-all ${statusStyle}`} />;
+});
+
+CollapsedSessionActivityDot.displayName = 'CollapsedSessionActivityDot';
 
 interface SidebarProps {
   onAboutClick: () => void;
@@ -170,8 +193,6 @@ export function Sidebar({ onAboutClick, onSettingsClick, isSettingsOpen, onSetti
   const sessions = useSessionStore((state) => state.sessions);
   const activeSessionId = useSessionStore((state) => state.activeSessionId);
   const setActiveSession = useSessionStore((state) => state.setActiveSession);
-  const activityStatus = usePanelStore(s => s.activityStatus);
-  const panelsBySession = usePanelStore(s => s.panels);
   const remoteFooterStatus = useMemo(
     () => getRemoteFooterStatus(remoteConnectionState, remoteHostState),
     [remoteConnectionState, remoteHostState],
@@ -287,17 +308,6 @@ export function Sidebar({ onAboutClick, onSettingsClick, isSettingsOpen, onSetti
                   {/* Session status badges — grouped under this project */}
                   {projectSessions.map((session) => {
                     const isActive = session.id === activeSessionId;
-                    const sessionPanels = panelsBySession[session.id] || [];
-                    const isSessionActive = sessionPanels.some(p => activityStatus[p.id] === 'active');
-                    const isWaitingForInput = sessionPanels.some(p => activityStatus[p.id] === 'waiting_for_input');
-                    const hasUnviewed = sessionPanels.some(p => activityStatus[p.id] === 'unviewed');
-                    const statusStyle = isSessionActive
-                      ? 'bg-status-info animate-pulse'
-                      : isWaitingForInput
-                        ? 'bg-orange-400 animate-pulse'
-                        : hasUnviewed
-                          ? 'bg-status-info'
-                          : 'bg-text-muted/20 opacity-40';
                     return (
                       <Tooltip key={session.id} content={<SessionDetailTooltip session={session} />} side="right">
                         <button
@@ -311,7 +321,7 @@ export function Sidebar({ onAboutClick, onSettingsClick, isSettingsOpen, onSetti
                            * TODO: Evolve into richer interactive badges with session identity
                            * (e.g., initials, mini name) and better click-to-navigate affordance.
                            */}
-                          <div className={`w-2.5 h-2.5 rounded-full transition-all ${statusStyle}`} />
+                          <CollapsedSessionActivityDot sessionId={session.id} />
                         </button>
                       </Tooltip>
                     );

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { memo, useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { ChevronDown, ChevronRight, Plus, FolderPlus, GitBranch, MoreHorizontal, Home, Archive, ArchiveRestore, Trash2, GitPullRequest, Pin, Monitor } from 'lucide-react';
 import { SessionDetailTooltip } from './SessionDetailTooltip';
 import { useSessionStore } from '../stores/sessionStore';
@@ -14,6 +14,42 @@ import { cn } from '../utils/cn';
 import type { Session, GitStatus } from '../types/session';
 import type { Project } from '../types/project';
 import { usePanelStore } from '../stores/panelStore';
+
+
+type ActivityStatus = 'active' | 'idle' | 'unviewed' | 'waiting_for_input';
+
+const activityDotClassName = (status: ActivityStatus) => cn(
+  "w-2 h-2 rounded-full flex-shrink-0 transition-all",
+  status === 'active'
+    ? 'bg-status-info animate-pulse'
+    : status === 'waiting_for_input'
+      ? 'bg-orange-400 animate-pulse'
+      : status === 'unviewed'
+        ? 'bg-status-info'
+        : 'bg-text-muted/20 opacity-40'
+);
+
+const ProjectActivityDot = memo(({ sessionIds }: { sessionIds: string[] }) => {
+  const projectActivity = usePanelStore(s => {
+    const projectActivityStatuses = sessionIds.map(sessionId => {
+      const sessionPanels = s.panels[sessionId] || [];
+      const statuses = sessionPanels.map(p => s.activityStatus[p.id]).filter(Boolean);
+      if (statuses.includes('active')) return 'active';
+      if (statuses.includes('waiting_for_input')) return 'waiting_for_input';
+      if (statuses.includes('unviewed')) return 'unviewed';
+      return 'idle';
+    });
+
+    if (projectActivityStatuses.includes('active')) return 'active';
+    if (projectActivityStatuses.includes('waiting_for_input')) return 'waiting_for_input';
+    if (projectActivityStatuses.includes('unviewed')) return 'unviewed';
+    return 'idle';
+  });
+
+  return <span className={activityDotClassName(projectActivity)} />;
+});
+
+ProjectActivityDot.displayName = 'ProjectActivityDot';
 
 
 
@@ -47,9 +83,6 @@ export function ProjectSessionList({
   const setActiveSession = useSessionStore(s => s.setActiveSession);
   const navigateToSessions = useNavigationStore(s => s.navigateToSessions);
   const navigateToProject = useNavigationStore(s => s.navigateToProject);
-  const panelPanels = usePanelStore(s => s.panels);
-  const panelActivityStatus = usePanelStore(s => s.activityStatus);
-
   // Hotkey registration
   const register = useHotkeyStore(s => s.register);
   const unregister = useHotkeyStore(s => s.unregister);
@@ -395,21 +428,7 @@ export function ProjectSessionList({
           const isExpanded = expandedProjects.has(project.id);
           const projectSessions = sessionsByProject.get(project.id) || [];
 
-          const projectActivityStatuses = projectSessions.map(s => {
-            const sessionPanels = panelPanels[s.id] || [];
-            const statuses = sessionPanels.map(p => panelActivityStatus[p.id]).filter(Boolean);
-            if (statuses.includes('active')) return 'active' as const;
-            if (statuses.includes('waiting_for_input')) return 'waiting_for_input' as const;
-            if (statuses.includes('unviewed')) return 'unviewed' as const;
-            return 'idle' as const;
-          });
-          const projectActivity = projectActivityStatuses.includes('active')
-            ? 'active'
-            : projectActivityStatuses.includes('waiting_for_input')
-              ? 'waiting_for_input'
-              : projectActivityStatuses.includes('unviewed')
-                ? 'unviewed'
-                : 'idle';
+          const projectSessionIds = projectSessions.map(s => s.id);
 
           const projectMenuItems: DropdownItem[] = [
             {
@@ -460,16 +479,7 @@ export function ProjectSessionList({
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 min-w-0">
                       {!isExpanded && (
-                        <span className={cn(
-                          "w-2 h-2 rounded-full flex-shrink-0 transition-all",
-                          projectActivity === 'active'
-                            ? 'bg-status-info animate-pulse'
-                            : projectActivity === 'waiting_for_input'
-                              ? 'bg-orange-400 animate-pulse'
-                              : projectActivity === 'unviewed'
-                                ? 'bg-status-info'
-                                : 'bg-text-muted/20 opacity-40'
-                        )} />
+                        <ProjectActivityDot sessionIds={projectSessionIds} />
                       )}
                       {isExpanded && <span className="w-2 h-2 flex-shrink-0" />}
                       <span className="text-xs font-semibold text-text-primary truncate">{project.name}</span>

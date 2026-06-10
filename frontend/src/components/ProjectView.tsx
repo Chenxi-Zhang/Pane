@@ -31,14 +31,12 @@ export const ProjectView: React.FC<ProjectViewProps> = ({
   const [mainRepoSession, setMainRepoSession] = useState<Session | null>(null);
   const [isLoadingSession, setIsLoadingSession] = useState(false);
   // Panel store state and actions
-  const {
-    panels,
-    activePanels,
-    setPanels,
-    setActivePanel: setActivePanelInStore,
-    addPanel,
-    removePanel
-  } = usePanelStore();
+  const panels = usePanelStore((state) => state.panels);
+  const activePanels = usePanelStore((state) => state.activePanels);
+  const setPanels = usePanelStore((state) => state.setPanels);
+  const setActivePanelInStore = usePanelStore((state) => state.setActivePanel);
+  const addPanel = usePanelStore((state) => state.addPanel);
+  const removePanel = usePanelStore((state) => state.removePanel);
 
   // Detail panel state
   const [detailVisible, setDetailVisible] = useState(() => {

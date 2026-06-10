@@ -73,6 +73,14 @@ export function useNotifications() {
   // sitting at a prompt between commands). Re-activation cancels the timer.
   const pendingIdleTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
+  // Track panels that just entered TUI mode so we can suppress the idle
+  // notification caused by the TUI-enter transition itself (not a real
+  // "agent finished" signal). The set is populated by the isAlternateScreen
+  // subscription and consumed by the activityStatus subscription — IPC
+  // ordering guarantees the TUI event arrives before the idle event.
+  const tuiJustEnteredRef = useRef<Set<string>>(new Set());
+  const prevAltScreenRef = useRef<Record<string, boolean>>({});
+
   // Project name cache keyed by project id, refreshed on mount and on project changes.
   const projectNamesRef = useRef<Map<number, string>>(new Map());
   useEffect(() => {
@@ -268,14 +276,28 @@ export function useNotifications() {
   // subscribeWithSelector middleware.
   useEffect(() => {
     const pending = pendingIdleTimersRef.current;
+    const tuiJustEntered = tuiJustEnteredRef.current;
     // Seed from current store state so panels already active at mount time
     // (e.g. restored terminals, agents still running during app startup) are
     // correctly detected on their first idle transition instead of being
     // dismissed as `undefined -> idle`.
     prevActivityRef.current = { ...usePanelStore.getState().activityStatus };
+    prevAltScreenRef.current = { ...usePanelStore.getState().isAlternateScreen };
     const unsubscribe = usePanelStore.subscribe((state) => {
       const activityStatus = state.activityStatus;
+      const altScreen = state.isAlternateScreen;
       const prev = prevActivityRef.current;
+      const prevAlt = prevAltScreenRef.current;
+
+      // Track TUI entries: isAlternateScreen went false→true.
+      for (const [panelId, active] of Object.entries(altScreen)) {
+        if (active && !prevAlt[panelId]) {
+          tuiJustEntered.add(panelId);
+        } else if (!active && prevAlt[panelId]) {
+          tuiJustEntered.delete(panelId);
+        }
+      }
+
       for (const [panelId, status] of Object.entries(activityStatus)) {
         const prevStatus = prev[panelId];
         if (prevStatus === 'active' && status === 'waiting_for_input') {
@@ -289,12 +311,23 @@ export function useNotifications() {
           // Schedule a debounced notification. Clear any stale timer first.
           const existing = pending.get(panelId);
           if (existing) clearTimeout(existing);
-          const scheduledLastActivityAt = state.lastActivityAt[panelId];
-          const timer = setTimeout(() => {
+
+          if (tuiJustEntered.has(panelId)) {
+            // TUI-enter caused this idle transition — suppress notification.
+            tuiJustEntered.delete(panelId);
+          } else if (altScreen[panelId]) {
+            // External signal idle while in TUI: the agent actually finished.
+            // Skip the debounce and notify immediately.
             pending.delete(panelId);
-            maybeNotifyPanelIdle(panelId, scheduledLastActivityAt);
-          }, NOTIFICATION_DEBOUNCE_MS);
-          pending.set(panelId, timer);
+            maybeNotifyPanelIdle(panelId, state.lastActivityAt[panelId]);
+          } else {
+            const scheduledLastActivityAt = state.lastActivityAt[panelId];
+            const timer = setTimeout(() => {
+              pending.delete(panelId);
+              maybeNotifyPanelIdle(panelId, scheduledLastActivityAt);
+            }, NOTIFICATION_DEBOUNCE_MS);
+            pending.set(panelId, timer);
+          }
         } else if ((prevStatus === 'idle' || prevStatus === 'unviewed' || prevStatus === 'waiting_for_input') && status === 'active') {
           // Panel woke up before the debounce fired: cancel the pending notification.
           const existing = pending.get(panelId);
@@ -313,6 +346,7 @@ export function useNotifications() {
         }
       }
       prevActivityRef.current = { ...activityStatus };
+      prevAltScreenRef.current = { ...altScreen };
     });
     return () => {
       unsubscribe();

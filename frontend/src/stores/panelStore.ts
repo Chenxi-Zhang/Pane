@@ -10,6 +10,7 @@ export const usePanelStore = create<PanelStore>()(
     activePanels: {},
     activityStatus: {},
     lastActivityAt: {},
+    isAlternateScreen: {},
 
     // Pure synchronous state updates
     setPanels: (sessionId, panels) => {
@@ -78,6 +79,12 @@ export const usePanelStore = create<PanelStore>()(
       set((state) => {
         delete state.activityStatus[panelId];
         delete state.lastActivityAt[panelId];
+      });
+    },
+
+    setAlternateScreen: (panelId, active) => {
+      set((state) => {
+        state.isAlternateScreen[panelId] = active;
       });
     },
 
