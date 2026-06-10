@@ -4585,6 +4585,14 @@ export class DatabaseService {
     return counts;
   }
 
+  /** Total number of outputs for a session — O(1) index scan, no row data loaded. */
+  getSessionOutputCount(sessionId: string): number {
+    const result = this.db
+      .prepare("SELECT COUNT(*) as count FROM session_outputs WHERE session_id = ?")
+      .get(sessionId) as { count: number } | undefined;
+    return result?.count || 0;
+  }
+
   getConversationMessageCount(sessionId: string): number {
     const result = this.db
       .prepare(

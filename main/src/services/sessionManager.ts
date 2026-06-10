@@ -65,6 +65,8 @@ export class SessionManager extends EventEmitter {
   private autoContextBuffers: Map<string, SessionOutput[]> = new Map();
   private analyticsManager: AnalyticsManager | null = null;
   private projectContextCache = new Map<number, { pathResolver: PathResolver; commandRunner: CommandRunner }>();
+  /** Tracks which sessions have received at least one output — avoids a DB SELECT on every addSessionOutput call. */
+  private sessionsWithOutput = new Set<string>();
 
   constructor(public db: DatabaseService, analyticsManager?: AnalyticsManager) {
     super();
@@ -563,13 +565,12 @@ export class SessionManager extends EventEmitter {
 
 
   addSessionOutput(id: string, output: Omit<SessionOutput, 'sessionId'>): void {
-    // Check if this is the first output for this session
-    const existingOutputs = this.db.getSessionOutputs(id, 1);
-    const isFirstOutput = existingOutputs.length === 0;
+    const isFirstOutput = !this.sessionsWithOutput.has(id);
     
     // Store in database (stringify JSON objects and error objects)
     const dataToStore = (output.type === 'json' || output.type === 'error') ? JSON.stringify(output.data) : String(output.data);
     this.db.addSessionOutput(id, output.type, dataToStore);
+    this.sessionsWithOutput.add(id);
     
     // Emit the output so it shows immediately in the UI
     const outputToEmit: SessionOutput = {
@@ -611,9 +612,9 @@ export class SessionManager extends EventEmitter {
       }
       
       if (promptText) {
-        // Get current output count to use as index
-        const outputs = this.db.getSessionOutputs(id);
-        this.db.addPromptMarker(id, promptText, outputs.length - 1);
+        // Use COUNT(*) instead of loading all outputs — avoids pulling thousands of rows
+        const outputCount = this.db.getSessionOutputCount(id);
+        this.db.addPromptMarker(id, promptText, outputCount - 1);
         // Also add to conversation messages for continuation support
         this.db.addConversationMessage(id, 'user', promptText);
       }
