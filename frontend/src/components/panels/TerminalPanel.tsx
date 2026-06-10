@@ -385,10 +385,13 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
     fitAddonRef.current.fit();
     const dimensions = fitAddonRef.current.proposeDimensions();
     if (dimensions) {
+      console.log(`[TerminalPanel] resizePtyToFit(${panel.id}): dims=${dimensions.cols}x${dimensions.rows} force=${!!options?.forceResizeSignal}`);
       if (options?.forceResizeSignal && dimensions.rows > 5) {
         window.electronAPI.invoke('terminal:resize', panel.id, dimensions.cols, dimensions.rows - 1);
       }
       window.electronAPI.invoke('terminal:resize', panel.id, dimensions.cols, dimensions.rows);
+    } else {
+      console.log(`[TerminalPanel] resizePtyToFit(${panel.id}): no dimensions from fitAddon`);
     }
   }, [panel.id]);
 
@@ -715,7 +718,19 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
             // Cached terminal already has an open DOM tree — reattach it to the
             // new container instead of calling .open() again (xterm forbids a
             // second .open() on a live Terminal, throwing or rendering blank).
-            console.log('[TerminalPanel] Reattaching cached terminal to new container');
+            //
+            // Send the PTY resize BEFORE appending the DOM element so that the
+            // TUI app receives SIGWINCH and starts redrawing while xterm is
+            // still hidden.  By the time xterm paints its first frame the
+            // fresh TUI output is already arriving (or about to arrive),
+            // avoiding a flash of stale content.
+            //
+            // Use the terminal's own cols/rows (preserved from cache) rather
+            // than calling fit() — the container doesn't have the element yet
+            // so fit would measure zero.
+            console.log(`[TerminalPanel] Reattaching cached terminal — sending early resize (${terminal.cols}x${terminal.rows}) before DOM attach`);
+            window.electronAPI.invoke('terminal:resize', panel.id, terminal.cols, terminal.rows);
+
             terminalRef.current.appendChild(terminal.element);
           } else {
             console.log('[TerminalPanel] Opening terminal in DOM element:', terminalRef.current);
@@ -876,7 +891,11 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
           // prompt over apps like opencode until a manual resize makes the app redraw.
           // Instead, restore the latest alternate-screen frame and send the same PTY
           // resize signal that already fixes TUI redraws from the toolbar/manual resize.
+          if (restoredFromCache) {
+            console.log(`[TerminalPanel] Restore path: from CACHE for panel ${panel.id} — skipping alternate-screen restore, relying on fitAndPaint effect`);
+          }
           if (!restoredFromCache && terminalStateForThisPanel) {
+            console.log(`[TerminalPanel] Restore path: NOT from cache, has state, isAlternateScreen=${terminalStateForThisPanel.isAlternateScreen}`);
             if (terminalStateForThisPanel.isAlternateScreen) {
               const alternateContent = normalizeTerminalBuffer(terminalStateForThisPanel.alternateScreenBuffer);
               if (alternateContent) {
@@ -1535,6 +1554,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
 
     let cancelled = false;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let delayedRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 
     const fitAndPaint = () => {
       if (cancelled || !fitAddonRef.current || !xtermRef.current || !terminalRef.current) return;
@@ -1543,17 +1563,39 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
       if ((containerWidth === 0 || containerWidth !== lastWidth) && retries < MAX_RETRIES) {
         lastWidth = containerWidth;
         retries++;
+        console.log(`[TerminalPanel] fitAndPaint(${panel.id}): containerWidth=${containerWidth} retry=${retries}`);
         retryTimer = setTimeout(fitAndPaint, 50);
         return;
       }
 
+      console.log(`[TerminalPanel] fitAndPaint(${panel.id}): container stable at ${containerWidth}px, calling resizePtyToFit`);
       resizePtyToFit();
+
+      // For alternate-screen (TUI) terminals, delay the xterm refresh to give
+      // the PTY process time to receive SIGWINCH and emit a fresh frame.
+      // Without this delay, terminal.refresh() repaints the stale buffer that
+      // the TUI is about to overwrite anyway — and if the TUI's redraw output
+      // is byte-identical to what's already in the buffer (same dimensions),
+      // xterm's renderer skips the update entirely, leaving the screen stale.
       const terminal = xtermRef.current;
-      if (terminal && terminal.rows > 0) {
-        terminal.refresh(0, terminal.rows - 1);
-      }
-      if (autoFocus) {
-        terminal?.focus();
+      const isAltScreen = terminal?.buffer?.active?.type === 'alternate';
+      if (isAltScreen) {
+        delayedRefreshTimer = setTimeout(() => {
+          if (cancelled || !xtermRef.current) return;
+          if (xtermRef.current.rows > 0) {
+            xtermRef.current.refresh(0, xtermRef.current.rows - 1);
+          }
+          if (autoFocus) {
+            xtermRef.current?.focus();
+          }
+        }, 150);
+      } else {
+        if (terminal && terminal.rows > 0) {
+          terminal.refresh(0, terminal.rows - 1);
+        }
+        if (autoFocus) {
+          terminal?.focus();
+        }
       }
     };
 
@@ -1563,6 +1605,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
       cancelled = true;
       cancelAnimationFrame(animationFrame);
       if (retryTimer) clearTimeout(retryTimer);
+      if (delayedRefreshTimer) clearTimeout(delayedRefreshTimer);
     };
   }, [useBatterySaverTerminalVisibility, panelVisible, isInitialized, autoFocus, resizePtyToFit]);
 

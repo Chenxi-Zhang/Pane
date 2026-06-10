@@ -239,6 +239,19 @@ export class TerminalSessionManager extends EventEmitter {
   resizeTerminal(sessionId: string, cols: number, rows: number): void {
     const session = this.terminalSessions.get(sessionId);
     if (session) {
+      // Force SIGWINCH when dimensions are unchanged — same rationale as
+      // terminalPanelManager.resizeTerminal().  Async restore avoids ConPTY
+      // coalescing two synchronous resizes in the same tick.
+      const prevCols = session.pty.cols;
+      const prevRows = session.pty.rows;
+      if (prevCols === cols && prevRows === rows) {
+        session.pty.resize(Math.max(1, cols - 1), rows);
+        const pty = session.pty;
+        setImmediate(() => {
+          try { pty.resize(cols, rows); } catch { /* PTY may have exited */ }
+        });
+        return;
+      }
       session.pty.resize(cols, rows);
     }
   }

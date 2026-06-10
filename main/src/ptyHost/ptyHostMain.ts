@@ -61,6 +61,8 @@ import type {
  */
 interface HostPty {
   readonly pid: number;
+  readonly cols: number;
+  readonly rows: number;
   onData(callback: (data: string) => void): { dispose(): void };
   onExit(callback: (event: { exitCode: number; signal?: number }) => void): { dispose(): void };
   write(data: string): void;
@@ -273,6 +275,17 @@ function handleResize(id: number, ptyId: string, cols: number, rows: number): vo
     return;
   }
   try {
+    // Force SIGWINCH when dimensions are unchanged — same rationale as
+    // terminalPanelManager.resizeTerminal().  Async restore avoids ConPTY
+    // coalescing two synchronous resizes in the same tick.
+    if (p.cols === cols && p.rows === rows) {
+      p.resize(Math.max(1, cols - 1), rows);
+      setImmediate(() => {
+        try { p.resize(cols, rows); } catch { /* PTY may have exited */ }
+      });
+      respondOk(id, undefined);
+      return;
+    }
     p.resize(cols, rows);
     respondOk(id, undefined);
   } catch (err) {

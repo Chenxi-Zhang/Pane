@@ -1237,6 +1237,34 @@ export class TerminalPanelManager {
     }
 
     try {
+      // Force SIGWINCH when dimensions are unchanged. On all platforms the
+      // kernel/conpty layer suppresses the resize signal when the new size
+      // matches the current one.  After a session switch the PTY retains its
+      // old dimensions while the terminal remounts at the same size, so TUI
+      // apps (OpenCode, Claude Code, etc.) never receive a resize event and
+      // never redraw — leaving the terminal blank.
+      //
+      // A cols-1 bump followed by a restore forces the size to change twice,
+      // delivering two resize events to the TUI.  The restore is deferred by
+      // one event-loop tick so that ConPTY and the child process actually
+      // process the first (smaller) size before seeing the second (correct)
+      // one — two synchronous pty.resize() calls in the same tick can be
+      // coalesced by ConPTY, making the TUI see only the final (unchanged)
+      // size and skip the repaint.
+      const prevCols = terminal.pty.cols;
+      const prevRows = terminal.pty.rows;
+      console.log(`[TerminalPanelManager] resizeTerminal(${panelId}): request=${cols}x${rows} pty=${prevCols}x${prevRows} sameDim=${prevCols === cols && prevRows === rows}`);
+      if (prevCols === cols && prevRows === rows) {
+        console.log(`[TerminalPanelManager] resizeTerminal(${panelId}): forcing SIGWINCH via cols-1 bump (async restore)`);
+        terminal.pty.resize(Math.max(1, cols - 1), rows);
+        // Restore correct size in the next tick so the TUI sees both sizes
+        const pty = terminal.pty;
+        setImmediate(() => {
+          try { pty.resize(cols, rows); } catch { /* PTY may have exited */ }
+        });
+        // Skip the synchronous resize below — already scheduled above
+        return;
+      }
       terminal.pty.resize(cols, rows);
     } catch (err) {
       // PTY may have exited between the map lookup and the resize call
