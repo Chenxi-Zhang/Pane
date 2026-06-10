@@ -117,6 +117,14 @@ export class DatabaseService {
     mkdirSync(dir, { recursive: true });
 
     this.db = new Database(dbPath);
+
+    // Performance-critical PRAGMAs for desktop use (especially HDD):
+    // WAL mode allows concurrent reads during writes — eliminates read/write blocking.
+    // NORMAL sync is safe with WAL and avoids full fsync on every commit.
+    // Larger cache keeps hot data in memory, reducing disk access.
+    this.db.pragma("journal_mode = WAL");
+    this.db.pragma("synchronous = NORMAL");
+    this.db.pragma("cache_size = -32000");
   }
 
   /**
