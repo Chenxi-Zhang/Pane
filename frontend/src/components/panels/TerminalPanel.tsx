@@ -57,7 +57,6 @@ interface TerminalRestoreState {
 
 const DEFAULT_TERMINAL_FONT_FAMILY = 'Geist Mono';
 const DEFAULT_TERMINAL_FONT_SIZE = 14;
-const WEBGL_APP_BLUR_DETACH_DELAY_MS = 10_000;
 const REFOCUS_DELAYED_REFRESH_MS = 300;
 const TERMINAL_VISIBILITY_REFRESH_MS = 60_000;
 const TERMINAL_VISIBILITY_VIEWER_ID = getTerminalVisibilityViewerId();
@@ -156,8 +155,6 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
   const useBatterySaverTerminalVisibility = terminalPowerMode === 'batterySaver';
   const panelVisible = isActive;
   const effectiveVisible = useBatterySaverTerminalVisibility ? panelVisible && windowFocused : true;
-  const [webglAllowed, setWebglAllowed] = useState(panelVisible);
-  const blurDetachTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Read CLI state from persisted panel state (handles remount case)
   const terminalState = panel.state?.customState as TerminalPanelState | undefined;
@@ -307,13 +304,6 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
     }
   }, [forwardToMainLog, panel.id]);
 
-  const disposeWebglRenderer = useCallback((reason = 'hidden') => {
-    if (!webglAddonRef.current) return;
-    try { webglAddonRef.current.dispose(); } catch { /* ignore */ }
-    webglAddonRef.current = null;
-    forwardToMainLog('info', `[TerminalPanel] WebGL renderer detached for panel ${panel.id} reason=${reason}`);
-  }, [forwardToMainLog, panel.id]);
-
   // Replaces the old 30 s snapshot interval: fire once on active-to-inactive
   // transitions (tab switches / panel hides). The dispose-time snapshot in the
   // terminal init effect stays as a backstop for full unmount.
@@ -349,54 +339,18 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = React.memo(({ panel, 
     return () => clearInterval(refreshTimer);
   }, [effectiveVisible, panel.id, isInitialized]);
 
-  // WebGL policy: keep hidden panels attached through tab switches, keep it
-  // attached through short app blurs, and detach only after a sustained app blur.
-  useEffect(() => {
-    if (blurDetachTimerRef.current) {
-      clearTimeout(blurDetachTimerRef.current);
-      blurDetachTimerRef.current = null;
-    }
-
-    if (!panelVisible) {
-      // Panel hidden (tab switch) — keep WebGL attached, xterm's render service
-      // pauses rendering via IntersectionObserver when not visible
-      setWebglAllowed(true);
-      return;
-    }
-
-    if (windowFocused) {
-      setWebglAllowed(true);
-      return;
-    }
-
-    setWebglAllowed(true);
-    blurDetachTimerRef.current = setTimeout(() => {
-      blurDetachTimerRef.current = null;
-      setWebglAllowed(false);
-      disposeWebglRenderer('app-blur-timeout');
-    }, WEBGL_APP_BLUR_DETACH_DELAY_MS);
-
-    return () => {
-      if (blurDetachTimerRef.current) {
-        clearTimeout(blurDetachTimerRef.current);
-        blurDetachTimerRef.current = null;
-      }
-    };
-  }, [panelVisible, windowFocused, disposeWebglRenderer]);
-
+  // WebGL: load once on init, keep alive for the terminal lifecycle.
+  // Chromium throttles background WebGL contexts automatically; xterm's render
+  // service pauses via IntersectionObserver when not visible. Manual detach on
+  // blur causes ResizeObserver side-effects that break terminal size calculation.
   useEffect(() => {
     if (!isInitialized || !xtermRef.current) return;
-    if (!webglAllowed) {
-      disposeWebglRenderer('webgl-not-allowed');
-      return;
-    }
-
     let disposed = false;
-    void loadWebglRenderer(xtermRef.current, () => disposed, windowFocused ? 'visible' : 'short-app-blur');
+    void loadWebglRenderer(xtermRef.current, () => disposed, 'visible');
     return () => {
       disposed = true;
     };
-  }, [webglAllowed, isInitialized, disposeWebglRenderer, loadWebglRenderer, windowFocused]);
+  }, [isInitialized, loadWebglRenderer]);
 
   // Terminal link handling hook
   const {
