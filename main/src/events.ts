@@ -301,7 +301,7 @@ export function setupEventListeners(services: AppServices): void {
 
         let commits: GitCommit[] = [];
         try {
-          commits = gitDiffManager.getCommitHistory(session.worktreePath, 10, comparisonBranch, historyCtx.commandRunner);
+          commits = await gitDiffManager.getCommitHistory(session.worktreePath, 10, comparisonBranch, historyCtx.commandRunner);
         } catch (error) {
           console.error(`[Events] Error getting commit history:`, error);
           // If there's an error, try without specifying main branch (get all commits)
@@ -417,7 +417,7 @@ export function setupEventListeners(services: AppServices): void {
 
         let commits: GitCommit[] = [];
         try {
-          commits = gitDiffManager.getCommitHistory(session.worktreePath, 10, comparisonBranch, errorHistoryCtx.commandRunner);
+          commits = await gitDiffManager.getCommitHistory(session.worktreePath, 10, comparisonBranch, errorHistoryCtx.commandRunner);
         } catch (error) {
           console.error(`[Events] Error getting commit history:`, error);
           // If there's an error, try without specifying main branch (get all commits)

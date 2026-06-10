@@ -116,15 +116,61 @@ export async function detectGitBase(
 
 export class WorktreeManager {
   private projectsCache: Map<string, { baseDir: string }> = new Map();
+  private branchCache: Map<string, { branch: string; timestamp: number }> = new Map();
+  private branchCacheInFlight: Map<string, Promise<string>> = new Map();
+  private readonly BRANCH_CACHE_TTL_MS = 5000; // 5 seconds
 
   constructor(
     private configManager?: ConfigManager,
     private analyticsManager?: AnalyticsManager
   ) {
     // No longer initialized with a single repo path
+   }
+
+  /**
+   * Public accessor for the branch name cache. IPC handlers and other
+   * services can call this instead of running their own `git branch
+   * --show-current` — it coalesces concurrent requests and caches results.
+   */
+  getCurrentBranch(worktreePath: string, commandRunner: CommandRunner): Promise<string> {
+    return this.getCurrentBranchCached(worktreePath, commandRunner);
   }
 
-  private getProjectPaths(projectPath: string, worktreeFolder: string | undefined, pathResolver: PathResolver) {
+  /**
+   * Get current branch name with short-lived cache and in-flight dedup to
+   * avoid redundant `git branch --show-current` calls. When multiple callers
+   * request the same worktree's branch concurrently, they all share the same
+   * underlying git invocation.
+   */
+  private getCurrentBranchCached(worktreePath: string, commandRunner: CommandRunner): Promise<string> {
+    // 1. Return immediately from TTL cache if fresh
+    const cached = this.branchCache.get(worktreePath);
+    if (cached && Date.now() - cached.timestamp < this.BRANCH_CACHE_TTL_MS) {
+      return Promise.resolve(cached.branch);
+    }
+
+    // 2. Coalesce with any in-flight request for the same worktree
+    const inFlight = this.branchCacheInFlight.get(worktreePath);
+    if (inFlight) return inFlight;
+
+    // 3. Kick off a new request
+    const promise = commandRunner.execAsync('git branch --show-current', worktreePath)
+      .then(({ stdout }) => {
+        const branch = stdout.trim();
+        this.branchCache.set(worktreePath, { branch, timestamp: Date.now() });
+        this.branchCacheInFlight.delete(worktreePath);
+        return branch;
+      })
+      .catch((error: unknown) => {
+        this.branchCacheInFlight.delete(worktreePath);
+        throw error;
+      });
+
+    this.branchCacheInFlight.set(worktreePath, promise);
+    return promise;
+  }
+
+   private getProjectPaths(projectPath: string, worktreeFolder: string | undefined, pathResolver: PathResolver) {
     const cacheKey = `${projectPath}:${worktreeFolder || 'worktrees'}`;
     if (!this.projectsCache.has(cacheKey)) {
       const folderName = worktreeFolder || 'worktrees';
@@ -373,6 +419,9 @@ export class WorktreeManager {
         await commandRunner.execAsync(`git worktree remove "${worktreePath}" --force`, projectPath);
         logWorktreeAudit('remove_succeeded', auditDetails);
 
+        // Clear branch cache for this worktree path
+        this.branchCache.delete(worktreePath);
+
         // Track worktree cleanup
         if (this.analyticsManager && sessionCreatedAt) {
           const sessionAgeDays = Math.floor((Date.now() - sessionCreatedAt.getTime()) / (1000 * 60 * 60 * 24));
@@ -545,11 +594,8 @@ export class WorktreeManager {
       // checked-out branch. Fall through to legacy behavior in that case.
       if (session.worktreePath) {
         try {
-          const { stdout } = await ctx.commandRunner.execAsync(
-            'git branch --show-current',
-            session.worktreePath,
-          );
-          if (stdout.trim() !== session.baseBranch) {
+          const currentBranch = await this.getCurrentBranchCached(session.worktreePath, ctx.commandRunner);
+          if (currentBranch !== session.baseBranch) {
             return session.baseBranch; // user-chosen, stable, the right answer
           }
           // Falls through to the legacy fallback path below.
@@ -619,8 +665,7 @@ export class WorktreeManager {
 
     try {
       // ONLY check the current branch in the project root directory
-      const currentBranchResult = await commandRunner.execAsync(`git branch --show-current`, projectPath);
-      const currentBranch = currentBranchResult.stdout.trim();
+      const currentBranch = await this.getCurrentBranchCached(projectPath, commandRunner);
       
       if (currentBranch) {
         return currentBranch;

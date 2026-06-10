@@ -781,13 +781,9 @@ export function registerSessionHandlers(
 
       console.log(`[IPC] sessions:get-output called for session: ${sessionId} with limit: ${outputLimit}`);
 
-      // Refresh git status when session is loaded/viewed
-      const session = await sessionManager.getSession(sessionId);
-      if (session && !session.archived) {
-        gitStatusManager.refreshSessionGitStatus(sessionId, false).catch(error => {
-          console.error(`[IPC] Failed to refresh git status for session ${sessionId}:`, error);
-        });
-      }
+      // Session lookup is deferred — output retrieval does not need the
+      // session object, and callers that do need it (e.g. git status)
+      // already go through dedicated IPC channels.
 
       // Always use session-based output retrieval
       const outputs = await sessionManager.getSessionOutputs(sessionId, outputLimit);

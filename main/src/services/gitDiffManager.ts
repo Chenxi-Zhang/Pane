@@ -38,15 +38,92 @@ export interface GitGraphCommit {
 }
 
 export class GitDiffManager {
+  // In-flight dedup: concurrent callers share the same Promise
+  private workingDirDiffInFlight = new Map<string, Promise<GitDiffResult>>();
+  // Short-lived result cache: sequential callers within the TTL get cached data
+  private workingDirDiffCache = new Map<string, { result: GitDiffResult; timestamp: number }>();
+  private readonly DIFF_CACHE_TTL_MS = 3_000; // 3 seconds
+
+  // In-flight dedup for commit history queries
+  private commitHistoryInFlight = new Map<string, Promise<GitCommit[]>>();
+
+  // Short-lived per-call cache for untracked files list — prevents
+  // `git ls-files --others` from running 3× inside a single
+  // captureWorkingDirectoryDiffInner invocation.
+  private untrackedFilesCache = new Map<string, { files: string[]; timestamp: number }>();
+  private readonly UNTRACKED_CACHE_TTL_MS = 500;
+
   constructor(
     private logger?: Logger,
     private analyticsManager?: AnalyticsManager
   ) {}
 
   /**
-   * Capture git diff for a worktree directory
+   * Capture git diff for a worktree directory.
+   * Deduplicates concurrent calls and caches results briefly so that
+   * multiple UI components (executions list, diff viewer) requesting
+   * the same worktree within the same render cycle share one set of
+   * git commands.
    */
-  async captureWorkingDirectoryDiff(worktreePath: string, commandRunner: CommandRunner): Promise<GitDiffResult> {
+  captureWorkingDirectoryDiff(worktreePath: string, commandRunner: CommandRunner): Promise<GitDiffResult> {
+    // Check result cache first
+    const cached = this.workingDirDiffCache.get(worktreePath);
+    if (cached && Date.now() - cached.timestamp < this.DIFF_CACHE_TTL_MS) {
+      return Promise.resolve(cached.result);
+    }
+
+    // Coalesce with any in-flight request
+    const inFlight = this.workingDirDiffInFlight.get(worktreePath);
+    if (inFlight) return inFlight;
+
+    const promise = this.captureWorkingDirectoryDiffInner(worktreePath, commandRunner);
+    this.workingDirDiffInFlight.set(worktreePath, promise);
+    return promise;
+  }
+
+  /**
+   * Lightweight variant that only returns stats (no full diff text).
+   * Used by `get-executions` which only needs additions/deletions/filesChanged
+   * for the "Uncommitted changes" entry — avoids the expensive `git diff HEAD`
+   * and untracked file content reads.
+   */
+  async captureWorkingDirectoryStats(worktreePath: string, commandRunner: CommandRunner): Promise<GitDiffStats> {
+    try {
+      // Reuse the dedup'd full diff if one is already in-flight or cached
+      const cached = this.workingDirDiffCache.get(worktreePath);
+      if (cached && Date.now() - cached.timestamp < this.DIFF_CACHE_TTL_MS) {
+        return cached.result.stats;
+      }
+      const inFlight = this.workingDirDiffInFlight.get(worktreePath);
+      if (inFlight) {
+        const result = await inFlight;
+        return result.stats;
+      }
+
+      // Otherwise, run only the lightweight commands
+      const trackedStats = this.parseDiffStats(commandRunner.exec('git diff --stat HEAD', worktreePath));
+      const untrackedFiles = this.getUntrackedFiles(worktreePath, commandRunner);
+      let untrackedAdditions = 0;
+      for (const file of untrackedFiles) {
+        if (!file || file.trim().length === 0) continue;
+        try {
+          const lines = commandRunner.exec(`wc -l < "${worktreePath}/${file.trim()}"`, worktreePath);
+          untrackedAdditions += parseInt(lines.trim()) || 0;
+        } catch {
+          // Skip files that can't be counted
+        }
+      }
+      return {
+        additions: trackedStats.additions + untrackedAdditions,
+        deletions: trackedStats.deletions,
+        filesChanged: trackedStats.filesChanged + untrackedFiles.length,
+      };
+    } catch {
+      return { additions: 0, deletions: 0, filesChanged: 0 };
+    }
+  }
+
+  private async captureWorkingDirectoryDiffInner(worktreePath: string, commandRunner: CommandRunner): Promise<GitDiffResult> {
     try {
       console.log(`captureWorkingDirectoryDiff called for: ${worktreePath}`);
       this.logger?.verbose(`Capturing git diff in ${worktreePath}`);
@@ -67,16 +144,23 @@ export class GitDiffManager {
       this.logger?.verbose(`Captured diff: ${stats.filesChanged} files, +${stats.additions} -${stats.deletions}`);
       console.log(`Diff stats:`, stats);
 
-      return {
+      const result: GitDiffResult = {
         diff,
         stats,
         changedFiles,
         beforeHash,
         afterHash: undefined // No after hash for working directory changes
       };
+
+      // Cache the result
+      this.workingDirDiffCache.set(worktreePath, { result, timestamp: Date.now() });
+
+      return result;
     } catch (error) {
       this.logger?.error(`Failed to capture git diff in ${worktreePath}:`, error instanceof Error ? error : undefined);
       throw error;
+    } finally {
+      this.workingDirDiffInFlight.delete(worktreePath);
     }
   }
 
@@ -111,9 +195,25 @@ export class GitDiffManager {
   }
 
   /**
-   * Get git commit history for a worktree (only commits unique to this branch)
+   * Get git commit history for a worktree (only commits unique to this branch).
+   * Deduplicates concurrent calls for the same worktree + comparison branch.
    */
-  getCommitHistory(worktreePath: string, limit: number, comparisonBranch: string, commandRunner: CommandRunner): GitCommit[] {
+  getCommitHistory(worktreePath: string, limit: number, comparisonBranch: string, commandRunner: CommandRunner): Promise<GitCommit[]> {
+    const cacheKey = `${worktreePath}:${comparisonBranch}:${limit}`;
+
+    const inFlight = this.commitHistoryInFlight.get(cacheKey);
+    if (inFlight) return inFlight;
+
+    const promise = Promise.resolve(this.getCommitHistoryInner(worktreePath, limit, comparisonBranch, commandRunner));
+    this.commitHistoryInFlight.set(cacheKey, promise);
+
+    // Clean up in-flight map when done
+    promise.finally(() => this.commitHistoryInFlight.delete(cacheKey));
+
+    return promise;
+  }
+
+  private getCommitHistoryInner(worktreePath: string, limit: number, comparisonBranch: string, commandRunner: CommandRunner): GitCommit[] {
     try {
       // Get commit log with stats for commits in HEAD not in the comparison branch.
       // Two-dot range: commits reachable from HEAD but not from comparisonBranch.
@@ -556,18 +656,29 @@ export class GitDiffManager {
   }
 
   /**
-   * Get list of untracked files
+   * Get list of untracked files.
+   * Results are cached briefly to avoid running `git ls-files --others`
+   * multiple times within a single captureWorkingDirectoryDiffInner call.
    */
   private getUntrackedFiles(worktreePath: string, commandRunner: CommandRunner): string[] {
+    const cached = this.untrackedFilesCache.get(worktreePath);
+    if (cached && Date.now() - cached.timestamp < this.UNTRACKED_CACHE_TTL_MS) {
+      return cached.files;
+    }
+
     try {
       const output = commandRunner.exec('git ls-files --others --exclude-standard', worktreePath);
-      
+
       // Handle empty output case
       if (!output || output.trim().length === 0) {
-        return [];
+        const result: string[] = [];
+        this.untrackedFilesCache.set(worktreePath, { files: result, timestamp: Date.now() });
+        return result;
       }
-      
-      return output.trim().split('\n').filter((f: string) => f && f.trim().length > 0);
+
+      const files = output.trim().split('\n').filter((f: string) => f && f.trim().length > 0);
+      this.untrackedFilesCache.set(worktreePath, { files, timestamp: Date.now() });
+      return files;
     } catch (error) {
       this.logger?.warn(`Could not get untracked files in ${worktreePath}`);
       return [];

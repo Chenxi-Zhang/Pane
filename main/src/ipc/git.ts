@@ -114,6 +114,19 @@ export function registerGitHandlers(
 ): void {
   const { sessionManager, gitDiffManager, worktreeManager, claudeCodeManager, gitStatusManager, databaseService } = services;
 
+  // In-flight dedup + short-lived result cache for git-graph requests.
+  // Concurrent callers share the same Promise, and results are cached for
+  // 3 s so that the re-render triggered by `git-status-updated` (~2 s
+  // after mount) doesn't spawn a second identical `git log`.
+  const gitGraphInFlight = new Map<string, Promise<{ success: boolean; data?: unknown; error?: string }>>();
+  const gitGraphResultCache = new Map<string, { result: { success: boolean; data?: unknown; error?: string }; timestamp: number }>();
+  const GIT_GRAPH_RESULT_TTL_MS = 3_000; // 3 seconds
+
+  // Cache for github remote URLs per session. Remote URLs change extremely
+  // rarely (only on `git remote set-url`), so a generous TTL is fine.
+  const githubRemoteCache = new Map<string, { url: string | null; timestamp: number }>();
+  const GITHUB_REMOTE_CACHE_TTL_MS = 30_000; // 30 seconds
+
   // Helper function to emit git operation events to all sessions in a project
   const emitGitOperationToProject = (sessionId: string, eventType: PanelEventType, message: string, details?: Record<string, unknown>) => {
     try {
@@ -206,7 +219,7 @@ export function registerGitHandlers(
     let useFallback = false;
 
     try {
-      commits = gitDiffManager.getCommitHistory(session.worktreePath, limit, comparisonBranch, ctx.commandRunner);
+      commits = await gitDiffManager.getCommitHistory(session.worktreePath, limit, comparisonBranch, ctx.commandRunner);
     } catch (error) {
       // Only isMainRepo sessions have a fallback path (raw last-N commits);
       // worktree sessions should propagate the error.
@@ -280,8 +293,10 @@ export function registerGitHandlers(
 
       const hasUncommittedChanges = gitDiffManager.hasChanges(session.worktreePath, ctx.commandRunner);
       if (hasUncommittedChanges) {
-        // Get stats for uncommitted changes
-        const uncommittedDiff = await gitDiffManager.captureWorkingDirectoryDiff(session.worktreePath, ctx.commandRunner);
+        // Get stats for uncommitted changes — use lightweight stats-only
+        // call instead of the full diff capture (avoids expensive `git diff HEAD`
+        // and untracked file content reads when we only need numbers).
+        const uncommittedStats = await gitDiffManager.captureWorkingDirectoryStats(session.worktreePath, ctx.commandRunner);
         
         // Add uncommitted changes as execution with id 0
         executions.unshift({
@@ -291,9 +306,9 @@ export function registerGitHandlers(
           after_commit_hash: 'UNCOMMITTED',
           commit_message: 'Uncommitted changes',
           timestamp: new Date().toISOString(),
-          stats_additions: uncommittedDiff.stats.additions,
-          stats_deletions: uncommittedDiff.stats.deletions,
-          stats_files_changed: uncommittedDiff.stats.filesChanged,
+          stats_additions: uncommittedStats.additions,
+          stats_deletions: uncommittedStats.deletions,
+          stats_files_changed: uncommittedStats.filesChanged,
           author: 'You',
           comparison_branch: comparisonBranch,
           history_source: historySource,
@@ -338,96 +353,121 @@ export function registerGitHandlers(
   });
 
   commandRegistry.register('sessions:get-git-graph', async (sessionId: string) => {
-    try {
-      const session = await sessionManager.getSession(sessionId);
-      if (!session || !session.worktreePath) {
-        return { success: false, error: 'Session or worktree path not found' };
-      }
-
-      const project = sessionManager.getProjectForSession(sessionId);
-      if (!project?.path) {
-        return { success: false, error: 'Project path not found for session' };
-      }
-
-      const ctx = sessionManager.getProjectContext(sessionId);
-      if (!ctx) throw new Error('Project context not found for session');
-
-      const comparisonBranch = await worktreeManager.getSessionComparisonBranch(session, ctx);
-      let branch: string;
-      try {
-        branch = ctx.commandRunner.exec('git rev-parse --abbrev-ref HEAD', session.worktreePath).trim() || session.baseBranch || 'unknown';
-      } catch {
-        branch = session.baseBranch || 'unknown';
-      }
-
-      let entries: GitGraphCommit[] = [];
-      let useFallback = false;
-
-      try {
-        entries = gitDiffManager.getGraphCommitHistory(session.worktreePath, branch, 50, comparisonBranch, ctx.commandRunner);
-        if (entries.length === 0 && session.isMainRepo) {
-          useFallback = true;
-        }
-      } catch (error) {
-        if (session.isMainRepo) {
-          useFallback = true;
-        } else {
-          throw error;
-        }
-      }
-
-      if (useFallback) {
-        const fallbackCommits = await worktreeManager.getLastCommits(session.worktreePath, 50, ctx.commandRunner);
-        entries = fallbackCommits.map((commit: RawCommitData, index: number, arr: RawCommitData[]) => ({
-          hash: commit.hash.substring(0, 7),
-          parents: index < arr.length - 1 ? [arr[index + 1].hash.substring(0, 7)] : [],
-          branch,
-          message: commit.message,
-          committerDate: new Date(commit.date).toISOString(),
-          author: commit.author || 'Unknown',
-        }));
-      }
-
-      // Prepend uncommitted changes if any
-      const hasUncommittedChanges = gitDiffManager.hasChanges(session.worktreePath, ctx.commandRunner);
-      if (hasUncommittedChanges) {
-        // Get diff stats for uncommitted changes
-        let filesChanged = 0;
-        let additions = 0;
-        let deletions = 0;
-        try {
-          const combinedStat = ctx.commandRunner.exec('git diff HEAD --shortstat', session.worktreePath).trim();
-          if (combinedStat) {
-            const fileMatch = combinedStat.match(/(\d+) files? changed/);
-            const addMatch = combinedStat.match(/(\d+) insertions?\(\+\)/);
-            const delMatch = combinedStat.match(/(\d+) deletions?\(-\)/);
-            filesChanged = fileMatch ? parseInt(fileMatch[1]) : 0;
-            additions = addMatch ? parseInt(addMatch[1]) : 0;
-            deletions = delMatch ? parseInt(delMatch[1]) : 0;
-          }
-        } catch {
-          // Ignore stat errors — still show the entry without stats
-        }
-
-        entries.unshift({
-          hash: 'index',
-          parents: entries.length > 0 ? [entries[0].hash] : [],
-          branch,
-          message: 'Uncommitted changes',
-          committerDate: new Date().toISOString(),
-          author: 'You',
-          filesChanged,
-          additions,
-          deletions,
-        });
-      }
-
-      return { success: true, data: { entries, currentBranch: branch } };
-    } catch (error) {
-      console.error('Failed to get git graph:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Failed to get git graph';
-      return { success: false, error: errorMessage };
+    // Check result cache first — avoids re-running `git log` when the
+    // frontend re-fetches ~2 s after mount due to `git-status-updated`.
+    const cachedResult = gitGraphResultCache.get(sessionId);
+    if (cachedResult && Date.now() - cachedResult.timestamp < GIT_GRAPH_RESULT_TTL_MS) {
+      return cachedResult.result;
     }
+
+    // Dedup: if a graph fetch is already in-flight for this session, piggyback
+    // on the same Promise instead of spawning another set of git commands.
+    const inFlight = gitGraphInFlight.get(sessionId);
+    if (inFlight) return inFlight;
+
+    const promise = (async () => {
+      try {
+        const session = await sessionManager.getSession(sessionId);
+        if (!session || !session.worktreePath) {
+          return { success: false, error: 'Session or worktree path not found' };
+        }
+
+        const project = sessionManager.getProjectForSession(sessionId);
+        if (!project?.path) {
+          return { success: false, error: 'Project path not found for session' };
+        }
+
+        const ctx = sessionManager.getProjectContext(sessionId);
+        if (!ctx) throw new Error('Project context not found for session');
+
+        const comparisonBranch = await worktreeManager.getSessionComparisonBranch(session, ctx);
+        // Reuse the cached branch lookup instead of running git rev-parse
+        const branch = await worktreeManager.getCurrentBranch(session.worktreePath, ctx.commandRunner) || session.baseBranch || 'unknown';
+
+        let entries: GitGraphCommit[] = [];
+        let useFallback = false;
+
+        try {
+          entries = gitDiffManager.getGraphCommitHistory(session.worktreePath, branch, 50, comparisonBranch, ctx.commandRunner);
+          if (entries.length === 0 && session.isMainRepo) {
+            useFallback = true;
+          }
+        } catch (error) {
+          if (session.isMainRepo) {
+            useFallback = true;
+          } else {
+            throw error;
+          }
+        }
+
+        if (useFallback) {
+          const fallbackCommits = await worktreeManager.getLastCommits(session.worktreePath, 50, ctx.commandRunner);
+          entries = fallbackCommits.map((commit: RawCommitData, index: number, arr: RawCommitData[]) => ({
+            hash: commit.hash.substring(0, 7),
+            parents: index < arr.length - 1 ? [arr[index + 1].hash.substring(0, 7)] : [],
+            branch,
+            message: commit.message,
+            committerDate: new Date(commit.date).toISOString(),
+            author: commit.author || 'Unknown',
+          }));
+        }
+
+        // Prepend uncommitted changes if any — prefer cached status to avoid
+        // redundant `git status --porcelain` and `git diff --shortstat` calls.
+        const cachedStatus = gitStatusManager.getCachedStatus(sessionId);
+        const hasUncommittedChanges = cachedStatus
+          ? cachedStatus.status.hasUncommittedChanges
+          : gitDiffManager.hasChanges(session.worktreePath, ctx.commandRunner);
+
+        if (hasUncommittedChanges) {
+          let filesChanged = cachedStatus?.status.filesChanged ?? 0;
+          let additions = cachedStatus?.status.additions ?? 0;
+          let deletions = cachedStatus?.status.deletions ?? 0;
+
+          // Only run git commands if cache wasn't available
+          if (!cachedStatus) {
+            try {
+              const combinedStat = ctx.commandRunner.exec('git diff HEAD --shortstat', session.worktreePath).trim();
+              if (combinedStat) {
+                const fileMatch = combinedStat.match(/(\d+) files? changed/);
+                const addMatch = combinedStat.match(/(\d+) insertions?\(\+\)/);
+                const delMatch = combinedStat.match(/(\d+) deletions?\(-\)/);
+                filesChanged = fileMatch ? parseInt(fileMatch[1]) : 0;
+                additions = addMatch ? parseInt(addMatch[1]) : 0;
+                deletions = delMatch ? parseInt(delMatch[1]) : 0;
+              }
+            } catch {
+              // Ignore stat errors — still show the entry without stats
+            }
+          }
+
+          entries.unshift({
+            hash: 'index',
+            parents: entries.length > 0 ? [entries[0].hash] : [],
+            branch,
+            message: 'Uncommitted changes',
+            committerDate: new Date().toISOString(),
+            author: 'You',
+            filesChanged,
+            additions,
+            deletions,
+          });
+        }
+
+        const result = { success: true, data: { entries, currentBranch: branch } } as const;
+        gitGraphResultCache.set(sessionId, { result, timestamp: Date.now() });
+        return result;
+      } catch (error) {
+        console.error('Failed to get git graph:', error);
+        const errorMessage = error instanceof Error ? error.message : 'Failed to get git graph';
+        return { success: false, error: errorMessage };
+      } finally {
+        gitGraphInFlight.delete(sessionId);
+      }
+    })();
+
+    gitGraphInFlight.set(sessionId, promise);
+    return promise;
   });
 
   commandRegistry.register('sessions:git-commit', async (sessionId: string, message: string) => {
@@ -1942,8 +1982,8 @@ export function registerGitHandlers(
 
       const comparisonBranch = await worktreeManager.getSessionComparisonBranch(session, ctx);
 
-      // Get current branch name
-      const currentBranch = ctx.commandRunner.exec('git branch --show-current', session.worktreePath).trim();
+      // Get current branch name — use cached lookup to avoid redundant git call
+      const currentBranch = await worktreeManager.getCurrentBranch(session.worktreePath, ctx.commandRunner);
 
       // Only call getOriginBranch for legacy isMainRepo sessions where baseBranch is not set.
       // When baseBranch is set it already includes the origin/ prefix if applicable — calling
@@ -2045,6 +2085,12 @@ export function registerGitHandlers(
 
   commandRegistry.register('git:get-github-remote', async (sessionId: string) => {
     try {
+      // Check cache first — remote URLs rarely change
+      const cached = githubRemoteCache.get(sessionId);
+      if (cached && Date.now() - cached.timestamp < GITHUB_REMOTE_CACHE_TTL_MS) {
+        return { success: true, data: cached.url };
+      }
+
       const session = sessionManager.getSession(sessionId);
       if (!session?.worktreePath) {
         return { success: true, data: null };
@@ -2056,26 +2102,30 @@ export function registerGitHandlers(
       const stdout = ctx.commandRunner.exec('git remote -v', session.worktreePath);
 
       // Parse remote output for github.com
+      let remoteUrl: string | null = null;
       const lines = stdout.split('\n');
       for (const line of lines) {
         // Match SSH format: git@github.com:org/repo.git (repo can contain dots like repo.name)
         const sshMatch = line.match(/git@github\.com:([^/]+\/[^\s]+?)(?:\.git)?(?:\s|$)/);
         if (sshMatch) {
-          // Remove .git suffix if present
           const repo = sshMatch[1].replace(/\.git$/, '');
-          return { success: true, data: `https://github.com/${repo}` };
+          remoteUrl = `https://github.com/${repo}`;
+          break;
         }
 
         // Match HTTPS format: https://github.com/org/repo.git or https://github.com/org/repo
         const httpsMatch = line.match(/https:\/\/github\.com\/([^/]+\/[^\s]+?)(?:\.git)?(?:\s|$)/);
         if (httpsMatch) {
-          // Remove .git suffix if present
           const repo = httpsMatch[1].replace(/\.git$/, '');
-          return { success: true, data: `https://github.com/${repo}` };
+          remoteUrl = `https://github.com/${repo}`;
+          break;
         }
       }
 
-      return { success: true, data: null };
+      // Update cache
+      githubRemoteCache.set(sessionId, { url: remoteUrl, timestamp: Date.now() });
+
+      return { success: true, data: remoteUrl };
     } catch (error) {
       console.error('Failed to get GitHub remote:', error);
       return { success: true, data: null }; // Silent fail, just no git links
